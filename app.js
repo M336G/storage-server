@@ -7,9 +7,11 @@ const validator = require("validator");
 const zlib = require("zlib");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+const axios = require("axios");
 
 const { log } = require(path.join(__dirname, "util", "functions.js"));
 const { storagePath, enableCompression } = require(path.join(__dirname, "config.json"));
+const { version } = require(path.join(__dirname, "package.json"));
 
 const PORT = process.env.PORT ? process.env.PORT : 3033;
 const TOKEN = process.env.TOKEN;
@@ -20,7 +22,7 @@ try {
     db = new Database(path.join(__dirname, "data", "database.db"));
     const initScript = fs.readFileSync(path.join(__dirname, "data", "database.sql"), "utf8");
     db.exec(initScript);
-    log.info("Connected to SQLite and initialized tables if they don't exist.");
+    log.info("Connected to SQLite and initialized tables if they didn't exist");
 } catch (error) {
     log.error("Error initializing SQLite database:", error.message);
     process.exit(1);
@@ -127,16 +129,30 @@ app.get("/ping", checkToken, async (req, res) => {
 
 app.post("/upload", checkToken, async (req, res) => {
     try {
-        let { file, expires } = req.body;
-        if (!file) return res.status(400).send({ success: false, cause: "Please atleast send a file" });
+        let { file, link, expires } = req.body;
+        if (link) link = decodeURIComponent(link, "base64url").replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, "");
+        if (!file && !link) return res.status(400).send({ success: false, cause: "Please atleast send a file or a link!" });
         if (expires && typeof expires !== "number") return res.status(400).send({ success: false, cause: "Make sure that the expires parameter is an integer" });
         if (expires && expires <= Date.now()) return res.status(400).send({ success: false, cause: "Expiry timestamp must be above the current epoch timestamp" });
 
         // Check if the file is encoded in base64 first
-        if (!validator.isBase64(file)) return res.status(422).send({ success: false, cause: "Please send a base64 encoded file" });
+        if (file && !validator.isBase64(file)) return res.status(422).send({ success: false, cause: "Please send a base64 encoded file" });
+        if (link && !validator.isURL(link)) return res.status(422).send({ success: false, cause: "Please send a valid URL" });
+
+        if (file) file = Buffer.from(file, "base64");
+
+        if (link) {
+            try {
+                file = await axios.get(link, { responseType: "arraybuffer", headers: { "User-Agent": `StorageServer/${version}` }});
+                file = Buffer.from(file.data, "binary");
+            } catch (error) {
+                if (error.response && error.response.status === 404) return res.status(404).send({ success: false, cause: "The link you provided doesn't exist" });
+                log.error("Error while trying to fetch a file:", error);
+                return res.status(500).send({ success: false, cause: "An error occured while trying to fetch this file" });
+            }
+        }
 
         const uuid = crypto.randomUUID();
-        file = Buffer.from(file, "base64");
 
         if (enableCompression) {
             file = await new Promise((resolve, reject) => {
