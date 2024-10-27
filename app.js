@@ -262,7 +262,7 @@ const checkExpiredFiles = () => {
     });
 })};
 
-setInterval(checkExpiredFiles, 60/*1800000*/); // Check for expired files every 30 minutes
+setInterval(checkExpiredFiles, 1800000); // Check for expired files every 30 minutes
 
 process.on("unhandledRejection", (reason, promise) => {
     log.error(`Unhandled rejection at ${promise}:`, reason);
