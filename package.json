@@ -9,12 +9,12 @@
     "start": "node app.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.5.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "fs": "^0.0.1-security",
     "path": "^0.12.7",
-    "sqlite3": "^5.1.7",
     "validator": "^13.12.0"
   }
 }

@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const validator = require("validator");
 const zlib = require("zlib");
 const fs = require("fs");
-const { Database } = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 
 const { log } = require(path.join(__dirname, "util", "functions.js"));
 const { storagePath, enableCompression } = require(path.join(__dirname, "config.json"));
@@ -15,25 +15,16 @@ const PORT = process.env.PORT ? process.env.PORT : 3033;
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats")
 
-const db = new Database(path.join(__dirname, "data", "database.db"), async (error) => {
-    if (error) {
-        log.error("Error opening SQLite:", error.message);
-    } else {
-        log.info("Connected to SQLite");
-        try {
-            db.exec(await fs.promises.readFile(path.join(__dirname, "data", "database.sql"), "utf8"), async (error) => { // Execute SQL script
-                if (error) {
-                    await log.error("Error executing SQL script:", error.message);
-                    return process.exit(1);
-                } else {
-                    log.info("SQLite tables have been created or already exist");
-                }
-            });
-        } catch (error) {
-            log.error("Error executing SQL script:", error.message);
-        }
-    }
-});
+let db;
+try {
+    db = new Database(path.join(__dirname, "data", "database.db"));
+    const initScript = fs.readFileSync(path.join(__dirname, "data", "database.sql"), "utf8");
+    db.exec(initScript);
+    log.info("Connected to SQLite and initialized tables if they don't exist.");
+} catch (error) {
+    log.error("Error initializing SQLite database:", error.message);
+    process.exit(1);
+}
 
 const app = express();
 
@@ -57,15 +48,7 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
         if (!uuid) return res.status(400).send({ success: false, cause: "You can't just download the server!" });
         if (!validator.isUUID(uuid, 4)) return res.status(400).send({ success: false, cause: "Invalid UUID" });
 
-        const fileData = await new Promise((resolve, reject) => {
-            db.get("SELECT 1 as \"exists\", expires, compressed FROM storage WHERE ID = ?", [uuid], (error, row) => {
-                if (error) {
-                    log.error("Error while trying to check for file existence:", error);
-                    return res.status(500).send({ success: false, cause: "Internal Server Error" });
-                }
-                resolve(row);
-            });
-        });
+        const fileData = db.prepare("SELECT 1 as 'exists', expires, compressed FROM storage WHERE ID = ?").get(uuid);
         // Check if the file exists
         if (!fileData) return res.status(404).json({ success: false, cause: "This file doesn't exist!" });
 
@@ -75,23 +58,10 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
 
         // If expired delete from database and storage
         if (expires && maxAge <= 0) {
-            return db.run("DELETE FROM storage WHERE ID = ?", [uuid], async (error) => {
-                if (error) {
-                    log.error("Error deleting expired file from database:", error);
-                    return res.status(500).json({ success: false, cause: "Internal Server Error" });
-                }
-                
-                // Remove the file from storage
-                await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
-                    if (error) {
-                        log.error("Error deleting expired file from storage:", error);
-                        return res.status(500).json({ success: false, cause: "Internal Server Error" });
-                    }
-                    
-                    log.info(`Deleted expired file (${uuid})`);
-                    return res.status(404).json({ success: false, cause: "This file doesn't exist!" });
-                });
-            });
+            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
+            await fs.promises.unlink(path.join(storagePath, uuid));
+            log.info(`Deleted expired file (${uuid})`);
+            return res.status(404).json({ success: false, cause: "This file doesn't exist!" });
         }
 
         // Read the file from storage
@@ -125,35 +95,15 @@ app.delete("/files/:uuid", checkToken, async (req, res) => {
         if (!uuid) return res.status(400).send({ success: false, cause: "You can't just delete the server!" });
         if (!validator.isUUID(uuid, 4)) return res.status(400).send({ success: false, cause: "Invalid UUID" });
 
-        const fileData = await new Promise((resolve, reject) => {
-            db.get("SELECT 1 as \"exists\" FROM storage WHERE ID = ?", [uuid], (error, row) => {
-                if (error) {
-                    log.error("Error while trying to check for file existence:", error);
-                    return res.status(500).send({ success: false, cause: "Internal Server Error" });
-                }
-                resolve(row);
-            });
-        });
+        const fileExist = db.prepare("SELECT 1 FROM storage WHERE ID = ?").get(uuid);
         // Check if the file exists
-        if (!fileData) return res.status(404).json({ success: false, cause: "This file doesn't exist!" });
+        if (!fileExist) return res.status(404).json({ success: false, cause: "This file doesn't exist!" });
 
         // Delete the file
-        return db.run("DELETE FROM storage WHERE ID = ?", [uuid], async (error) => {
-            if (error) {
-                log.error("Error deleting file from database:", error);
-                return res.status(500).json({ success: false, cause: "Internal Server Error" });
-            }
-                
-            // Remove the file from storage
-            await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
-                if (error) {
-                    log.error("Error deleting file from storage:", error);
-                    return res.status(500).json({ success: false, cause: "Internal Server Error" });
-                }
-            });
-            log.info(`Deleted file (${uuid})`);
-            return res.status(200).json({ success: true, uuid });
-        });
+        db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
+        await fs.promises.unlink(path.join(storagePath, uuid));
+        log.info(`Deleted file (${uuid})`);
+        return res.status(200).json({ success: true, uuid });
     } catch (error) {
         log.error("Error while trying to return file:", error);
         return res.status(500).send({ success: false, cause: "Internal Server Error" });
@@ -206,24 +156,13 @@ app.post("/upload", checkToken, async (req, res) => {
 
         await fs.promises.writeFile(path.join(storagePath, uuid), file);
 
-        return new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO storage (ID, size, compressed, expires, timestamp) 
-                VALUES (?, ?, ?, ?, ?)`,
-                [uuid, size, enableCompression ? 1 : 0, expires, timestamp],
-                (error) => {
-                    if (error) {
-                        log.error("Error inserting file data into SQLite:", error);
-                        resolve(false);
-                    } else {
-                        log.info(`New file added (${uuid})`);
-                        res.status(200).send({ success: true, uuid, size, expires, timestamp });
-                        resolve(true);
-                    }
-                }
-            );
-        });
+        db.prepare(
+            `INSERT INTO storage (ID, size, compressed, expires, timestamp) 
+             VALUES (?, ?, ?, ?, ?)`
+        ).run(uuid, size, enableCompression ? 1 : 0, expires, timestamp);
 
+        log.info(`New file added (${uuid})`);
+        res.status(200).send({ success: true, uuid, size, expires, timestamp });
     } catch (error) {
         log.error("Error while trying to upload a file:", error);
         return res.status(500).send({ success: false, cause: "Internal Server Error" });
@@ -243,23 +182,17 @@ function checkToken(req, res, next) {
 
 const checkExpiredFiles = () => {
     const now = Date.now();
-    db.all("SELECT ID FROM storage WHERE expires IS NOT NULL AND expires < ?", [now], (error, rows) => {
-        if (error) return log.error("Error while checking for expired files:", error);
-        rows.forEach(row => {
-            const uuid = row.ID;
-            db.run("DELETE FROM storage WHERE ID = ?", [uuid], async (error) => {
-                if (error) return log.error("Error deleting expired file from database:", error);
-                await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
-                    if (error) {
-                        log.error("Error deleting expired file from storage:", error);
-                    } else {
-                        log.info(`Deleted expired file (${uuid})`);
-                    }
-                });
-            }
-        );
+    const expiredFiles = db.prepare("SELECT ID FROM storage WHERE expires IS NOT NULL AND expires < ?").all(now);
+    expiredFiles.forEach(row => {
+        const uuid = row.ID;
+        db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
+        fs.promises.unlink(path.join(storagePath, uuid)).then(() => {
+            log.info(`Deleted expired file (${uuid})`);
+        }).catch((error) => {
+            log.error("Error deleting expired file from storage:", error);
+        });
     });
-})};
+};
 
 setInterval(checkExpiredFiles, 1800000); // Check for expired files every 30 minutes
 
