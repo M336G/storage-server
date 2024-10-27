@@ -150,10 +150,9 @@ app.delete("/files/:uuid", checkToken, async (req, res) => {
                     log.error("Error deleting file from storage:", error);
                     return res.status(500).json({ success: false, cause: "Internal Server Error" });
                 }
-                    
-                log.info(`Deleted file (${uuid})`);
-                return res.status(200).json({ success: true, uuid });
             });
+            log.info(`Deleted file (${uuid})`);
+            return res.status(200).json({ success: true, uuid });
         });
     } catch (error) {
         log.error("Error while trying to return file:", error);
@@ -217,7 +216,7 @@ app.post("/upload", checkToken, async (req, res) => {
                         log.error("Error inserting file data into SQLite:", error);
                         resolve(false);
                     } else {
-                        log.info(`New file added! (${uuid})`);
+                        log.info(`New file added (${uuid})`);
                         res.status(200).send({ success: true, uuid, size, expires, timestamp });
                         resolve(true);
                     }
