@@ -1,0 +1,20 @@
+{
+  "name": "storage-server",
+  "description": "A simple and fast storage server",
+  "version": "1.0.0",
+  "main": "app.js",
+  "author": "M336",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "sqlite3": "^5.1.7",
+    "validator": "^13.12.0"
+  }
+}
