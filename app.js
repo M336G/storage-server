@@ -21,7 +21,7 @@ const db = new Database(path.join(__dirname, "data", "database.db"), async (erro
     } else {
         log.info("Connected to SQLite");
         try {
-            db.exec(fs.readFileSync(path.join(__dirname, "data", "database.sql"), "utf8"), async (error) => { // Execute SQL script
+            db.exec(await fs.promises.readFile(path.join(__dirname, "data", "database.sql"), "utf8"), async (error) => { // Execute SQL script
                 if (error) {
                     await log.error("Error executing SQL script:", error.message);
                     return process.exit(1);
@@ -82,7 +82,7 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
                 }
                 
                 // Remove the file from storage
-                fs.unlink(path.join(storagePath, uuid), (error) => {
+                await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
                     if (error) {
                         log.error("Error deleting expired file from storage:", error);
                         return res.status(500).json({ success: false, cause: "Internal Server Error" });
@@ -145,15 +145,14 @@ app.delete("/files/:uuid", checkToken, async (req, res) => {
             }
                 
             // Remove the file from storage
-            fs.unlink(path.join(storagePath, uuid), (error) => {
+            await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
                 if (error) {
                     log.error("Error deleting file from storage:", error);
                     return res.status(500).json({ success: false, cause: "Internal Server Error" });
                 }
-                    
-                log.info(`Deleted file (${uuid})`);
-                return res.status(200).json({ success: true, uuid });
             });
+            log.info(`Deleted file (${uuid})`);
+            return res.status(200).json({ success: true, uuid });
         });
     } catch (error) {
         log.error("Error while trying to return file:", error);
@@ -205,7 +204,7 @@ app.post("/upload", checkToken, async (req, res) => {
         const size = Buffer.byteLength(file);
         const timestamp = Date.now();
 
-        fs.writeFileSync(path.join(storagePath, uuid), file);
+        await fs.promises.writeFile(path.join(storagePath, uuid), file);
 
         return new Promise((resolve, reject) => {
             db.run(
@@ -217,7 +216,7 @@ app.post("/upload", checkToken, async (req, res) => {
                         log.error("Error inserting file data into SQLite:", error);
                         resolve(false);
                     } else {
-                        log.info(`New file added! (${uuid})`);
+                        log.info(`New file added (${uuid})`);
                         res.status(200).send({ success: true, uuid, size, expires, timestamp });
                         resolve(true);
                     }
@@ -248,9 +247,9 @@ const checkExpiredFiles = () => {
         if (error) return log.error("Error while checking for expired files:", error);
         rows.forEach(row => {
             const uuid = row.ID;
-            db.run("DELETE FROM storage WHERE ID = ?", [uuid], (error) => {
+            db.run("DELETE FROM storage WHERE ID = ?", [uuid], async (error) => {
                 if (error) return log.error("Error deleting expired file from database:", error);
-                fs.unlink(path.join(storagePath, uuid), (error) => {
+                await fs.promises.unlink(path.join(storagePath, uuid), (error) => {
                     if (error) {
                         log.error("Error deleting expired file from storage:", error);
                     } else {
