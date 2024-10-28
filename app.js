@@ -42,7 +42,7 @@ if (process.env.RATE_LIMIT) {
         }));
 }
 
-app.get("/files/:uuid", checkToken, async (req, res) => {
+app.get("/file/:uuid", checkToken, async (req, res) => {
     try {
         let { uuid } = req.params;
         uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
@@ -91,7 +91,43 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
 
 app.use(express.json({ limit: "2gb" }));
 
-app.delete("/files/:uuid", checkToken, async (req, res) => {
+app.get("/info/:uuid", checkToken, async (req, res) => {
+    try {
+        let { uuid } = req.params;
+        uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
+
+        if (!uuid) { if (!res.headersSent) return res.status(400).send({ success: false, cause: "You can't just fetch the server!" }); else return }
+        if (!validator.isUUID(uuid, 4)) { if (!res.headersSent) return res.status(400).send({ success: false, cause: "Invalid UUID" }); else return }
+
+        const file = db.prepare("SELECT size, expires, timestamp FROM storage WHERE ID = ?").get(uuid);
+        // Check if the file exists
+        if (!file) { if (!res.headersSent) return res.status(404).json({ success: false, cause: "This file doesn't exist!" }); else return }
+        
+        // If expired delete from database and storage
+        const now = Date.now();
+        const expires = file.expires ? parseInt(file.expires, 10) : null;
+        const maxAge = expires ? (expires > now ? expires - now : -1) : 2592000000; // Default to 30 days
+
+        if (file.expires && maxAge <= 0) {
+            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
+            await fs.promises.unlink(path.join(storagePath, uuid));
+            log.info(`Deleted expired file (${uuid})`);
+            if (!res.headersSent) res.status(404).json({ success: false, cause: "This file doesn't exist!" });
+            return;
+        }
+
+        res.set("Cache-Control", `public, max-age=${maxAge / 1000}, immutable`); // Set Cache-Control header
+
+        if (!res.headersSent) res.status(200).json({ success: true, uuid, size: file.size, expires: file.expires, timestamp: file.timestamp });
+        return;
+    } catch (error) {
+        log.error("Error while trying to return file info:", error);
+        if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
+        return;
+    }
+});
+
+app.delete("/file/:uuid", checkToken, async (req, res) => {
     try {
         let { uuid } = req.params;
         uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
