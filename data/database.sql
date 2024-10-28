@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS "storage" (
 	"size" INTEGER NOT NULL DEFAULT 0,
 	"compressed" INTEGER NOT NULL DEFAULT 0,
 	"expires" INTEGER DEFAULT null,
+	"accessed" INTEGER DEFAULT null,
 	"timestamp" INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY("ID")
 );

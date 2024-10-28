@@ -10,7 +10,7 @@ const Database = require("better-sqlite3");
 const axios = require("axios");
 
 const { log } = require(path.join(__dirname, "util", "functions.js"));
-const { storagePath, maxStorageSize, enableCompression } = require(path.join(__dirname, "config.json"));
+const { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } = require(path.join(__dirname, "config.json"));
 const { version } = require(path.join(__dirname, "package.json"));
 
 const PORT = process.env.PORT ? process.env.PORT : 3033;
@@ -82,6 +82,7 @@ app.get("/file/:uuid", async (req, res) => {
             log.error("Error while reading the file:", error);
             if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return
         });
+        db.prepare("UPDATE storage SET accessed = ? WHERE ID = ?").run(Date.now(), uuid);
     } catch (error) {
         log.error("Error while trying to return file:", error);
         if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
@@ -99,7 +100,7 @@ app.get("/info/:uuid", async (req, res) => {
         if (!uuid) { if (!res.headersSent) return res.status(400).send({ success: false, cause: "You can't just fetch the server!" }); else return }
         if (!validator.isUUID(uuid, 4)) { if (!res.headersSent) return res.status(400).send({ success: false, cause: "Invalid UUID" }); else return }
 
-        const file = db.prepare("SELECT size, expires, timestamp FROM storage WHERE ID = ?").get(uuid);
+        const file = db.prepare("SELECT size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
         // Check if the file exists
         if (!file) { if (!res.headersSent) return res.status(404).json({ success: false, cause: "This file doesn't exist!" }); else return }
         
@@ -118,7 +119,7 @@ app.get("/info/:uuid", async (req, res) => {
 
         res.set("Cache-Control", `public, max-age=${maxAge / 1000}, immutable`); // Set Cache-Control header
 
-        if (!res.headersSent) res.status(200).json({ success: true, uuid, size: file.size, expires: file.expires, timestamp: file.timestamp });
+        if (!res.headersSent) res.status(200).json({ success: true, uuid, size: file.size, expires: file.expires, accessed: file.accessed, timestamp: file.timestamp });
         return;
     } catch (error) {
         log.error("Error while trying to return file info:", error);
@@ -243,21 +244,64 @@ function checkToken(req, res, next) {
     else { if (!res.headersSent) res.status(401).json({ success: false, cause: "Unauthorized" }); return };
 }
 
-const checkExpiredFiles = () => {
+const checkExpiredFiles = async () => {
     const now = Date.now();
-    const expiredFiles = db.prepare("SELECT ID FROM storage WHERE expires IS NOT NULL AND expires < ?").all(now);
-    expiredFiles.forEach(row => {
-        const uuid = row.ID;
-        db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-        fs.promises.unlink(path.join(storagePath, uuid)).then(() => {
-            log.info(`Deleted expired file (${uuid})`);
-        }).catch((error) => {
-            log.error("Error deleting expired file from storage:", error);
+    const unaccessedBeforeDeletion = now - ((unaccessedDaysBeforeDeletion ? unaccessedDaysBeforeDeletion : 999999999 /* Just prevent it from working if it's not set lmao */) * 24 * 60 * 60 * 1000); // From days to milliseconds
+
+    // Fetch files that need to be deleted
+    const files = db.prepare("SELECT ID FROM storage WHERE (expires IS NOT NULL AND expires < ?) OR (accessed IS NOT NULL AND accessed < ?) OR (accessed IS NULL AND timestamp < ?)").all(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+
+    if (files.length > 0) {
+        // Delete expired files from the database
+        db.prepare("DELETE FROM storage WHERE (expires IS NOT NULL AND expires < ?) OR (accessed IS NOT NULL AND accessed < ?) OR (accessed IS NULL AND timestamp < ?)").run(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+
+        // Prepare deletion promises for the files
+        const fsDeletionPromises = files.map(row => {
+            const uuid = row.ID;
+            return fs.promises.unlink(path.join(storagePath, uuid));
         });
-    });
+
+        // Wait for all deletions to complete
+        try {
+            await Promise.all(fsDeletionPromises);
+            log.info(`Deleted expired/(old) unaccessed files (${files.length} files)`);
+        } catch (error) {
+            log.error("Error deleting files from storage:", error);
+        }
+    }
 };
 
-setInterval(checkExpiredFiles, 1800000); // Check for expired files every 30 minutes
+const checkInvalidFiles = async () => {
+    const files = db.prepare("SELECT ID FROM storage").all();
+    
+    if (files.length == 0) return;
+
+    const deletionPromises = [];
+
+    for (const row of files) {
+        const uuid = row.ID;
+        const filePath = path.join(storagePath, uuid);
+
+        try {
+            await fs.promises.access(filePath);
+        } catch (error) {
+            deletionPromises.push(
+                db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid)
+            );
+        }
+    }
+
+    // Wait for all deletions to complete
+    try {
+        await Promise.all(deletionPromises);
+        if (deletionPromises.length > 0) log.info(`Deleted invalid files (${deletionPromises.length} files)`);
+    } catch (error) {
+        log.error("Error deleting invalid files from the database:", error);
+    }
+};
+
+setInterval(checkExpiredFiles, 1800000); // Check for expired/(old) unaccessed files every 30 minutes
+setInterval(checkInvalidFiles, 86400000); // Check for invalid files every day
 
 process.on("unhandledRejection", (reason, promise) => {
     log.error(`Unhandled rejection at ${promise}:`, reason);

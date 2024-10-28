@@ -1,5 +1,7 @@
 {
     "storagePath": "data/storage",
+    
+    "unaccessedDaysBeforeDeletion": null,
 
     "maxStorageSize": null,
     "enableCompression": true
