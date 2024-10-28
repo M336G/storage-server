@@ -42,7 +42,7 @@ if (process.env.RATE_LIMIT) {
         }));
 }
 
-app.get("/file/:uuid", checkToken, async (req, res) => {
+app.get("/file/:uuid", async (req, res) => {
     try {
         let { uuid } = req.params;
         uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
@@ -91,7 +91,7 @@ app.get("/file/:uuid", checkToken, async (req, res) => {
 
 app.use(express.json({ limit: "2gb" }));
 
-app.get("/info/:uuid", checkToken, async (req, res) => {
+app.get("/info/:uuid", async (req, res) => {
     try {
         let { uuid } = req.params;
         uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
