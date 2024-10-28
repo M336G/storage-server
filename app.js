@@ -198,9 +198,7 @@ function checkToken(req, res, next) {
 
     const token = req.headers.authorization;
     if (token && token === `Bearer ${TOKEN}`) return next();
-
-    if (!res.headersSent) res.status(401).json({ success: false, cause: "Unauthorized" });
-    return;
+    else { if (!res.headersSent) res.status(401).json({ success: false, cause: "Unauthorized" }); return };
 }
 
 const checkExpiredFiles = () => {
