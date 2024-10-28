@@ -63,7 +63,8 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
             db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
             await fs.promises.unlink(path.join(storagePath, uuid));
             log.info(`Deleted expired file (${uuid})`);
-            if (!res.headersSent) return res.status(404).json({ success: false, cause: "This file doesn't exist!" }); else return
+            if (!res.headersSent) res.status(404).json({ success: false, cause: "This file doesn't exist!" });
+            return;
         }
 
         // Read the file from storage
@@ -83,7 +84,8 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
         });
     } catch (error) {
         log.error("Error while trying to return file:", error);
-        if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return
+        if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
+        return;
     }
 });
 
@@ -105,10 +107,12 @@ app.delete("/files/:uuid", checkToken, async (req, res) => {
         db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
         await fs.promises.unlink(path.join(storagePath, uuid));
         log.info(`Deleted file (${uuid})`);
-        if (!res.headersSent) return res.status(200).json({ success: true, uuid }); else return
+        if (!res.headersSent) res.status(200).json({ success: true, uuid });
+        return;
     } catch (error) {
         log.error("Error while trying to return file:", error);
-        if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return
+        if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
+        return;
     }
 });
 
@@ -119,11 +123,13 @@ app.get("/ping", checkToken, async (req, res) => {
         res.setHeader("Expires", "0");
         res.setHeader("Surrogate-Control", "no-store");
 
-        res.json({ timestamp: Date.now() });
+        if (!res.headersSent) res.status(200).json({ timestamp: Date.now() });
+        return;
     }
     catch (error) {
         log.error("Error while trying to ping (somehow):", error);
-        if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return
+        if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
+        return;
     }
 });
 
@@ -147,7 +153,8 @@ app.post("/upload", checkToken, async (req, res) => {
             } catch (error) {
                 if (error.response && error.response.status === 404) { if (!res.headersSent) return res.status(404).send({ success: false, cause: "The link you provided doesn't exist" }); else return }
                 log.error("Error while trying to fetch a file:", error);
-                if (!res.headersSent) return res.status(500).send({ success: false, cause: "An error occured while trying to fetch this file" }); else return
+                if (!res.headersSent) res.status(500).send({ success: false, cause: "An error occured while trying to fetch this file" });
+                return;
             }
         }
 
@@ -179,7 +186,8 @@ app.post("/upload", checkToken, async (req, res) => {
         res.status(200).send({ success: true, uuid, size, expires, timestamp });
     } catch (error) {
         log.error("Error while trying to upload a file:", error);
-        if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return
+        if (!res.headersSent) res.status(500).send({ success: false, cause: "Internal Server Error" });
+        return;
     }
 });
 
@@ -191,7 +199,8 @@ function checkToken(req, res, next) {
     const token = req.headers.authorization;
     if (token && token === `Bearer ${TOKEN}`) return next();
 
-    if (!res.headersSent) return res.status(401).json({ success: false, cause: "Unauthorized" }); else return
+    if (!res.headersSent) res.status(401).json({ success: false, cause: "Unauthorized" });
+    return;
 }
 
 const checkExpiredFiles = () => {
