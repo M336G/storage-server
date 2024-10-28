@@ -63,7 +63,7 @@ app.get("/files/:uuid", checkToken, async (req, res) => {
             db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
             await fs.promises.unlink(path.join(storagePath, uuid));
             log.info(`Deleted expired file (${uuid})`);
-            if (!res.headersSent) return  res.status(404).json({ success: false, cause: "This file doesn't exist!" }); else return
+            if (!res.headersSent) return res.status(404).json({ success: false, cause: "This file doesn't exist!" }); else return
         }
 
         // Read the file from storage
