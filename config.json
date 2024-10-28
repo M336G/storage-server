@@ -1,5 +1,6 @@
 {
     "storagePath": "data/storage",
 
+    "maxStorageSize": null,
     "enableCompression": true
 }

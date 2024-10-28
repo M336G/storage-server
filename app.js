@@ -10,7 +10,7 @@ const Database = require("better-sqlite3");
 const axios = require("axios");
 
 const { log } = require(path.join(__dirname, "util", "functions.js"));
-const { storagePath, enableCompression } = require(path.join(__dirname, "config.json"));
+const { storagePath, maxStorageSize, enableCompression } = require(path.join(__dirname, "config.json"));
 const { version } = require(path.join(__dirname, "package.json"));
 
 const PORT = process.env.PORT ? process.env.PORT : 3033;
@@ -158,8 +158,6 @@ app.post("/upload", checkToken, async (req, res) => {
             }
         }
 
-        const uuid = crypto.randomUUID();
-
         if (enableCompression) {
             file = await new Promise((resolve, reject) => {
                 zlib.deflate(file, (error, buffer) => {
@@ -174,7 +172,15 @@ app.post("/upload", checkToken, async (req, res) => {
         }
 
         const size = Buffer.byteLength(file);
+        if (maxStorageSize) {
+            const totalSize = db.prepare("SELECT SUM(size) AS totalSize FROM storage").get().totalSize;
+            // Convert from gigabytes to bytes
+            console.log(totalSize)
+            if (totalSize >= maxStorageSize * 1073741824 || totalSize + size >= maxStorageSize * 1073741824) { if (!res.headersSent) return res.status(507).send({ success: false, cause: "This storage has hit its total size limit!" }); else return }
+        }
+
         const timestamp = Date.now();
+        const uuid = crypto.randomUUID();
 
         await fs.promises.writeFile(path.join(storagePath, uuid), file);
         db.prepare(
