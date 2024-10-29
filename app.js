@@ -153,7 +153,7 @@ app.delete("/file/:uuid", checkToken, async (req, res) => {
     }
 });
 
-app.get("/ping", checkToken, async (req, res) => {
+app.get("/ping", async (req, res) => {
     try {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
         res.setHeader("Pragma", "no-cache");
