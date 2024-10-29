@@ -212,7 +212,6 @@ app.post("/upload", checkToken, async (req, res) => {
         if (maxStorageSize) {
             const totalSize = db.prepare("SELECT SUM(size) AS totalSize FROM storage").get().totalSize;
             // Convert from gigabytes to bytes
-            console.log(totalSize)
             if (totalSize >= maxStorageSize * 1073741824 || totalSize + size >= maxStorageSize * 1073741824) { if (!res.headersSent) return res.status(507).send({ success: false, cause: "This storage has hit its total size limit!" }); else return }
         }
 
