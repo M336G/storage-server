@@ -1,66 +1,65 @@
-const fs = require("fs").promises;
-const path = require("path");
+import { appendFile } from "node:fs/promises";
+import { join } from "path";
 
-// Simplified async functions that are related to console logging.
+const logFilePath = join(__dirname, "..", "logs.txt");
+
+// Simplified logging functions
 const log = {
-    // Log an error in the console.
+    // Log an error
     error: async (message, error) => {
-        const logMessage = !error ? `[ERROR] ${message}` : `[ERROR] ${message} ${error}`;
+        const logMessage = `[ERROR] ${message}${error ? ` ${error}` : ""}`;
         try {
-            await fs.appendFile(path.join(__dirname, "..", "logs.txt"), `${logMessage}\n`, 'utf8');
-            return console.error(logMessage);
+            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+            console.error(logMessage);
         } catch (error) {
             console.error("Failed to write error log:", error);
         }
     },
 
-    // Log a warning in the console.
+    // Log a warning
     warn: async (message, warn) => {
-        const logMessage = !warn ? `[WARN] ${message}` : `[WARN] ${message} ${warn}`;
+        const logMessage = `[WARN] ${message}${warn ? ` ${warn}` : ""}`;
         try {
-            await fs.appendFile(path.join(__dirname, "..", "logs.txt"), `${logMessage}\n`, 'utf8');
-            return console.warn(logMessage);
+            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+            console.warn(logMessage);
         } catch (error) {
             console.error("Failed to write warn log:", error);
         }
     },
 
-    // Log an info in the console.
+    // Log an info
     info: async (message, info) => {
-        const logMessage = !info ? `[INFO] ${message}` : `[INFO] ${message} ${info}`;
+        const logMessage = `[INFO] ${message}${info ? ` ${info}` : ""}`;
         try {
-            await fs.appendFile(path.join(__dirname, "..", "logs.txt"), `${logMessage}\n`, 'utf8');
-            return console.info(logMessage);
+            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+            console.info(logMessage);
         } catch (error) {
             console.error("Failed to write info log:", error);
         }
     },
 
-    // Log a debug in the console.
+    // Log a debug
     debug: async (message, debug) => {
-        const logMessage = !debug ? `[DEBUG] ${message}` : `[DEBUG] ${message} ${debug}`;
+        const logMessage = `[DEBUG] ${message}${debug ? ` ${debug}` : ""}`;
         try {
-            await fs.appendFile(path.join(__dirname, "..", "logs.txt"), `${logMessage}\n`, 'utf8');
-            return console.info(logMessage);
+            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+            console.debug(logMessage);
         } catch (error) {
             console.error("Failed to write debug log:", error);
         }
     },
 
-    // Log a request in the console.
-    request: async (request, logToConsole) => {
+    // Log a request
+    request: async (request, logToConsole = false) => {
         if (!request) return;
         const logMessage = `[REQUEST] ${request}`;
         try {
-            await fs.appendFile(path.join(__dirname, "..", "logs.txt"), `${logMessage}\n`, 'utf8');
+            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
             if (logToConsole) console.log(logMessage);
-            return;
         } catch (error) {
-            console.error("Failed to write request log:", error);
+        console.error("Failed to write request log:", error);
         }
     }
 };
 
-module.exports = {
-    log
-};
+export { log };

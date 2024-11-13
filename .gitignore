@@ -135,3 +135,4 @@ data/storage/*
 logs.txt
 .env
 .DS_Store
+bun.lockb
