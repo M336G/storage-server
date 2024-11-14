@@ -1,12 +1,14 @@
 require("dotenv").config();
 import { Elysia } from "elysia";
 import { Database } from "bun:sqlite";
-import * as path from "path";
-import * as crypto from "crypto";
-import * as validator from "validator";
-import * as zlib from "node:zlib";
-import * as fs from "node:fs";
+import { join } from "path";
+import { randomUUID } from "crypto";
+import { isURL, isBase64, isUUID } from "validator";
+import { deflate, createInflate } from "node:zlib";
+import { unlink } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import axios from "axios";
+
 import { log } from "./util/functions.js";
 import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
 import { version } from "./package.json";
@@ -17,12 +19,13 @@ if (!TOKEN) log.warn("The server is currently running without any token. It is e
 
 let db;
 try {
-    db = new Database(path.join(__dirname, "data", "database.db"));
-    const initScript = fs.readFileSync(path.join(__dirname, "data", "database.sql"), "utf8");
+    db = new Database(join(__dirname, "data", "database.db"));
+    const initScript = await Bun.file(join(__dirname, "data", "database.sql")).text();
     db.exec(initScript);
+    db.exec("PRAGMA journal_mode = WAL;");
     log.info("Connected to SQLite and initialized tables if they didn't exist");
 } catch (catchError) {
-    log.error("Error initializing SQLite database:", error.message);
+    log.error("Error initializing SQLite database:", catchError.message);
     process.exit(1);
 }
 
@@ -47,10 +50,15 @@ app.get("/file/:uuid", async ({ set, params: { uuid }, error }) => {
 
         if (!uuid) return error(400, { success: false, cause: "You can't just download the server!" });
 
-        if (!validator.isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
+        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
 
         const fileData = db.prepare("SELECT 1 as 'exists', expires, compressed FROM storage WHERE ID = ?").get(uuid);
         if (!fileData) return error(404, { success: false, cause: "This file doesn't exist!" });
+
+        if (!await Bun.file(join(storagePath, uuid)).exists()) {
+            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
+            return error(404, { success: false, cause: "This file doesn't exist!" });
+        }
 
         const now = Date.now();
         const expires = fileData.expires ? parseInt(fileData.expires, 10) : null;
@@ -58,20 +66,20 @@ app.get("/file/:uuid", async ({ set, params: { uuid }, error }) => {
 
         if (expires && maxAge <= 0) {
             db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-            await fs.promises.unlink(path.join(storagePath, uuid));
+            await unlink(join(storagePath, uuid));
             log.info(`Deleted expired file (${uuid})`);
             return error(404, { success: false, cause: "This file doesn't exist!" });
         }
 
         db.prepare("UPDATE storage SET accessed = ? WHERE ID = ?").run(Date.now(), uuid);
 
-        const fileStream = fs.createReadStream(path.join(storagePath, uuid));
+        const fileStream = createReadStream(join(storagePath, uuid));
 
         set.headers["Cache-Control"] = `public, max-age=${maxAge / 1000}, immutable`;
 
         // Handle file compression
         if (fileData.compressed === 1) {
-            return fileStream.pipe(zlib.createInflate());
+            return fileStream.pipe(createInflate());
         } else {
             return fileStream;
         }
@@ -87,7 +95,7 @@ app.get("/info/:uuid", async ({ params: { uuid }, error }) => {
 
         if (!uuid) return error(400, { success: false, cause: "You can't just fetch the server!" });
 
-        if (!validator.isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
+        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
 
         const file = db.prepare("SELECT size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
         if (!file) return error(404, { success: false, cause: "This file doesn't exist!" });
@@ -98,7 +106,7 @@ app.get("/info/:uuid", async ({ params: { uuid }, error }) => {
 
         if (file.expires && maxAge <= 0) {
             db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-            await fs.promises.unlink(path.join(storagePath, uuid));
+            await unlink(join(storagePath, uuid));
             log.info(`Deleted expired file (${uuid})`);
             return error(404, { success: false, cause: "This file doesn't exist!" });
         }
@@ -124,13 +132,13 @@ app.delete("/file/:uuid", async ({ headers, params: { uuid }, error }) => {
 
         if (!uuid) return error(400, { success: false, cause: "You can't just delete the server!" });
 
-        if (!validator.isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
+        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
 
         const fileExist = db.prepare("SELECT 1 FROM storage WHERE ID = ?").get(uuid);
         if (!fileExist) return { success: false, cause: "This file doesn't exist!" };
 
         db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-        await fs.promises.unlink(path.join(storagePath, uuid));
+        await unlink(join(storagePath, uuid));
         log.info(`Deleted file (${uuid})`);
 
         return { success: true, uuid };
@@ -158,8 +166,8 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
         if (expires && typeof expires !== "number") return error(422, { success: false, cause: "Make sure that the expires parameter is an integer" });
         if (expires && expires <= Date.now()) return error(422, { success: false, cause: "Expiry timestamp must be above the current epoch timestamp" });
 
-        if (file && !validator.isBase64(file)) return error(422, { success: false, cause: "Please send a base64 encoded file" });
-        if (link && !validator.isURL(link)) return error(422, { success: false, cause: "Please send a valid URL" });
+        if (file && !isBase64(file)) return error(422, { success: false, cause: "Please send a base64 encoded file" });
+        if (link && !isURL(link)) return error(422, { success: false, cause: "Please send a valid URL" });
         if (file) file = Buffer.from(file, "base64");
 
         if (link) {
@@ -174,7 +182,7 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
 
         if (enableCompression) {
             file = await new Promise((resolve, reject) => {
-                zlib.deflate(file, (error, buffer) => {
+                deflate(file, (error, buffer) => {
                     if (error) {
                         log.error("Error while trying to compress a file:", error);
                         resolve(null);
@@ -187,9 +195,9 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
 
         if (maxStorageSize && file.length > maxStorageSize) return error(413, { success: false, cause: "File too large" });
 
-        const uuid = crypto.randomUUID();
-        const filename = path.join(storagePath, uuid);
-        await fs.promises.writeFile(filename, file);
+        const uuid = randomUUID();
+        const filename = join(storagePath, uuid);
+        await Bun.write(filename, file);
         const compressed = enableCompression ? 1 : 0;
 
         db.prepare("INSERT INTO storage (ID, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?)").run(uuid, Date.now(), file.length, expires, compressed);
@@ -231,7 +239,7 @@ const checkExpiredFiles = async () => {
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
             const uuid = row.ID;
-            return fs.promises.unlink(path.join(storagePath, uuid));
+            return unlink(join(storagePath, uuid));
         });
 
         // Wait for all deletions to complete
@@ -253,11 +261,9 @@ const checkInvalidFiles = async () => {
 
     for (const row of files) {
         const uuid = row.ID;
-        const filePath = path.join(storagePath, uuid);
+        const filePath = join(storagePath, uuid);
 
-        try {
-            await fs.promises.access(filePath);
-        } catch (error) {
+        if (!await Bun.file(filePath).exists()) {
             deletionPromises.push(
                 db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid)
             );

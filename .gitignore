@@ -131,6 +131,8 @@ dist
 
 package-lock.json
 data/database.db
+data/database.db-shm
+data/database.db-wal
 data/storage/*
 logs.txt
 .env
