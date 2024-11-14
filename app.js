@@ -190,7 +190,7 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
                     resolve(buffer);
                 });
             });
-            if (!file) { if (!res.headersSent) return res.status(500).send({ success: false, cause: "Internal Server Error" }); else return }
+            if (!file) return error(500, { success: false, cause: "Internal Server Error" });
         }
 
         if (maxStorageSize && file.length > maxStorageSize) return error(413, { success: false, cause: "File too large" });

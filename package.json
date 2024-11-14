@@ -1,7 +1,7 @@
 {
   "name": "storage-server",
   "description": "A simple and fast storage server",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "main": "app.js",
   "author": "M336",
   "license": "AGPL-3.0-only",
