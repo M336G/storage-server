@@ -7,15 +7,14 @@ import { isURL, isBase64, isUUID } from "validator";
 import { deflate, createInflate } from "node:zlib";
 import { unlink } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+import { hostname } from "node:os";
 import axios from "axios";
 
 import { log } from "./util/functions.js";
 import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
 import { version } from "./package.json";
 
-const PORT = process.env.PORT ? process.env.PORT : 3033;
-const TOKEN = process.env.TOKEN;
-if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats");
+const maxStorageBytes = maxStorageSize ? maxStorageSize * 1024 * 1024 * 1024 : null // Convert from gigabytes to bytes
 
 let db;
 try {
@@ -29,9 +28,15 @@ try {
     process.exit(1);
 }
 
-const app = new Elysia();
+const PORT = process.env.PORT ? process.env.PORT : 3033;
+const TOKEN = process.env.TOKEN;
+if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats");
 
-if (process.env.TRUST_PROXY) app.set("trust proxy", process.env.TRUST_PROXY); // Number of proxies between user and server
+const startTimestamp = Date.now();
+
+const app = new Elysia({ serve: { maxRequestBodySize: 2 * 1024 * 1024 * 1024 } }); // 2 GB in bytes, max upload limit
+
+if (process.env.BEHIND_PROXY) app.use(require("elysia-ip").ip({ headersOnly: true }));
 
 // Rate limiting
 if (process.env.RATE_LIMIT) {
@@ -44,9 +49,9 @@ if (process.env.RATE_LIMIT) {
     );
 }
 
-app.get("/file/:uuid", async ({ set, params: { uuid }, error }) => {
+app.get("/file/:uuid?", async ({ set, params: { uuid }, error }) => {
     try {
-        uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
+        if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
 
         if (!uuid) return error(400, { success: false, cause: "You can't just download the server!" });
 
@@ -89,11 +94,23 @@ app.get("/file/:uuid", async ({ set, params: { uuid }, error }) => {
     }
 });
 
-app.get("/info/:uuid", async ({ params: { uuid }, error }) => {
+app.get("/info/:uuid?", async ({ params: { uuid }, error }) => {
     try {
-        uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
+        if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
 
-        if (!uuid) return error(400, { success: false, cause: "You can't just fetch the server!" });
+        // Display information about the server instead if there is no UUID
+        if (!uuid) {
+            const info = db.prepare("SELECT COUNT(ID) as count, SUM(size) as size FROM storage").get();
+            return {
+                success: true,
+                name: process.env.HOSTNAME ? process.env.HOSTNAME : hostname(),
+                version,
+                start: startTimestamp,
+                count: info.count,
+                size: info.size,
+                maxSize: maxStorageBytes
+            }
+        }
 
         if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
 
@@ -193,7 +210,7 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
             if (!file) return error(500, { success: false, cause: "Internal Server Error" });
         }
 
-        if (maxStorageSize && file.length > maxStorageSize) return error(413, { success: false, cause: "File too large" });
+        if (maxStorageBytes && file.length > maxStorageBytes) return error(413, { success: false, cause: "File too large" });
 
         const uuid = randomUUID();
         const filename = join(storagePath, uuid);
