@@ -83,8 +83,23 @@ app.get("/file/:uuid?", async ({ set, params: { uuid }, error }) => {
         set.headers["Cache-Control"] = `public, max-age=${maxAge / 1000}, immutable`;
 
         // Handle file compression
+        fileStream.on("error", (streamError) => {
+            log.error("Error during file stream:", streamError);
+            fileStream.destroy();
+            return error(500, { success: false, cause: "Internal Server Error" });
+        });
+          
         if (fileData.compressed === 1) {
-            return fileStream.pipe(createInflate());
+            const compressedStream = fileStream.pipe(createInflate());
+          
+            compressedStream.on("error", (compressionError) => {
+                log.error("Error during inflation stream:", compressionError);
+                fileStream.destroy();
+                compressedStream.destroy();
+                return error(500, { success: false, cause: "Internal Server Error" });
+            });
+          
+            return compressedStream;
         } else {
             return fileStream;
         }
@@ -178,7 +193,7 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
     if (!await checkToken(headers.authorization)) return error(401, { success: false, cause: "Unauthorized" });
     
     try {
-        if (link) link = decodeURIComponent(link, "base64url").replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, "");
+        if (link) link = decodeURIComponent(link).replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, "");
         if (!file && !link) return error(400, { success: false, cause: "Please at least send a file or a link!" });
         if (expires && typeof expires !== "number") return error(422, { success: false, cause: "Make sure that the expires parameter is an integer" });
         if (expires && expires <= Date.now()) return error(422, { success: false, cause: "Expiry timestamp must be above the current epoch timestamp" });
