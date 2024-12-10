@@ -1,5 +1,5 @@
 # storage-server
-An easy to setup and optimized storing solution.
+An easy to setup and optimized storing solution using Bun & Elysia.
 
 ## How to setup?
 1. Clone the repository with `git clone https://github.com/M336G/storage-server.git`.
