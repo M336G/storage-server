@@ -1,32 +1,46 @@
 FROM oven/bun:latest
 
-LABEL name="storage-server"
+# Metadata
+LABEL name="storage-server" \
+      version="1.0.0" \
+      description="An easy to setup and optimized storing solution using Bun & Elysia."
 
-ENV NODE_ENV=production
+# Environment variables
+ENV NODE_ENV=production \
+    HOSTNAME= \
+    TOKEN= \
+    PORT= \
+    RATE_LIMIT= \
+    BEHIND_PROXY=
 
-# The name of your storage-server instance (defaults to your computer's hostname)
-ENV HOSTNAME=storage-server
-# Token (optional, but extremely recommended to set one)
-ENV TOKEN=AAAABBBBCCCCDDDD
-# Port on which the express app will run. (default to 3033)
-ENV PORT=3033
+# Install necessary system dependencies and clean up cache
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Amount of maximum requests allowed from the same IP address per minute. (optional)
-ENV RATE_LIMIT=500
-# Useful if you run this application behind a reverse proxy. (optional)
-ENV BEHIND_PROXY=0
-
-
-RUN apt-get update -y && apt-get install -y git
+# Set the working directory
 WORKDIR /app
 
-# Auto-update
+# Clone from the GitHub repository
 ARG BRANCH=main
-ARG GITHUB_TOKEN=YOUR_GITHUB_TOKEN
-RUN git clone --branch ${BRANCH} https://${GITHUB_TOKEN}:${GITHUB_TOKEN}@github.com/M336G/storage-server.git . || (git fetch origin && git reset --hard origin/${BRANCH})
+RUN git clone --branch ${BRANCH} https://github.com/M336G/storage-server.git . && \
+    git checkout ${BRANCH} && \
+    rm -rf .git
 
-RUN rm -rf package-lock.json && rm -rf bun.lockb
-RUN bun install --omit=dev --production
+# Install dependencies while skipping development dependencies
+RUN rm -f package-lock.json bun.lockb && \
+    bun install --omit=dev --production
 
+# Set a non-root user for security (create one if needed)
+RUN addgroup --system storagegroup && \
+    adduser --system --ingroup storagegroup storageuser && \
+    chown -R storageuser:storagegroup /app
+USER storageuser
+# NOTE: Make sure to allow the user "storageuser" to read and write on your mounted drives, if you have any!
+
+# Expose the port for the application
+EXPOSE 3033/tcp
+
+# Entrypoint and command
 ENTRYPOINT ["bun"]
-CMD ["app.js"]
+CMD ["start"]
