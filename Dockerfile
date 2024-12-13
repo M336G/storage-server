@@ -11,7 +11,9 @@ ENV NODE_ENV=production \
     TOKEN= \
     PORT= \
     RATE_LIMIT= \
-    BEHIND_PROXY=
+    BEHIND_PROXY= \
+    LOG_LEVEL= \
+    WRITE_LOGS=
 
 # Install necessary system dependencies and clean up cache
 RUN apt-get update && \

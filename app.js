@@ -324,9 +324,11 @@ checkHashes();
 setInterval(checkHashes, 86400000); // Check for files that haven't gotten an hash every day
 
 process.on("unhandledRejection", (reason, promise) => {
-    log.error(`Unhandled rejection at ${promise}:`, reason);
+    log.fatal(`Unhandled rejection at ${promise}:`, reason);
+    process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
-    log.error(`Uncaught exception:`, error);
+    log.fatal(`Uncaught exception:`, error);
+    process.exit(1);
 });

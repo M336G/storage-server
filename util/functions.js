@@ -1,17 +1,44 @@
 import { appendFile } from "node:fs/promises";
-import { join } from "path";
 import { createHash } from "node:crypto";
 
-const logFilePath = join(__dirname, "..", "logs.txt");
+const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
+
+const logLevels = {
+    "trace": 0,
+    "debug": 1,
+    "info": 2,
+    "warn": 3,
+    "error": 4,
+    "fatal": 5,
+    "nothing": 6
+};
+
+const logLevelString = process.env.LOG_LEVEL ? process.env.LOG_LEVEL.toLowerCase() : "info";
+const logLevel = logLevels[logLevelString] !== undefined ? logLevels[logLevelString] : 2;
 
 // Simplified logging functions
 const log = {
+    // Log a fatal error
+    fatal: async (message, fatal) => {
+        const logMessage = `[FATAL] ${message}${fatal ? ` ${fatal}` : ""}`;
+        try {
+            if (logLevel <= 5) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.error(logMessage);
+            }
+        } catch (error) {
+            console.error("Failed to write fatal error log:", error);
+        }
+    },
+
     // Log an error
     error: async (message, error) => {
         const logMessage = `[ERROR] ${message}${error ? ` ${error}` : ""}`;
         try {
-            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
-            console.error(logMessage);
+            if (logLevel <= 4) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.error(logMessage);
+            }
         } catch (error) {
             console.error("Failed to write error log:", error);
         }
@@ -21,8 +48,10 @@ const log = {
     warn: async (message, warn) => {
         const logMessage = `[WARN] ${message}${warn ? ` ${warn}` : ""}`;
         try {
-            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
-            console.warn(logMessage);
+            if (logLevel <= 3) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.warn(logMessage);
+            }
         } catch (error) {
             console.error("Failed to write warn log:", error);
         }
@@ -32,33 +61,38 @@ const log = {
     info: async (message, info) => {
         const logMessage = `[INFO] ${message}${info ? ` ${info}` : ""}`;
         try {
-            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
-            console.info(logMessage);
+            if (logLevel <= 2) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.info(logMessage);
+            }
         } catch (error) {
             console.error("Failed to write info log:", error);
         }
     },
 
-    // Log a debug
+    // Log a debug info
     debug: async (message, debug) => {
         const logMessage = `[DEBUG] ${message}${debug ? ` ${debug}` : ""}`;
         try {
-            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
-            console.debug(logMessage);
+            if (logLevel <= 1) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.debug(logMessage);
+            }
         } catch (error) {
             console.error("Failed to write debug log:", error);
         }
     },
 
-    // Log a request
-    request: async (request, logToConsole = false) => {
-        if (!request) return;
-        const logMessage = `[REQUEST] ${request}`;
+    // Log a trace info
+    trace: async (message, trace) => {
+        const logMessage = `[TRACE] ${message}${trace ? ` ${trace}` : ""}`;
         try {
-            await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
-            if (logToConsole) console.log(logMessage);
+            if (logLevel <= 0) {
+                if (logFilePath) await appendFile(logFilePath, `${logMessage}\n`, { encoding: "utf8" });
+                console.debug(logMessage);
+            }
         } catch (error) {
-        console.error("Failed to write request log:", error);
+            console.error("Failed to write trace log:", error);
         }
     }
 };
