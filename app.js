@@ -1,4 +1,3 @@
-require("dotenv").config();
 import { Elysia } from "elysia";
 import { Database } from "bun:sqlite";
 import { join } from "path";
@@ -6,9 +5,9 @@ import { randomUUID } from "crypto";
 import { isURL, isBase64, isUUID } from "validator";
 import { deflate, createInflate } from "node:zlib";
 import { unlink } from "node:fs/promises";
-import { createReadStream } from "node:fs";
 import { hostname } from "node:os";
 import axios from "axios";
+import { PassThrough, pipeline } from "stream";
 
 import { log } from "./util/functions.js";
 import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
@@ -78,31 +77,26 @@ app.get("/file/:uuid?", async ({ set, params: { uuid }, error }) => {
 
         db.prepare("UPDATE storage SET accessed = ? WHERE ID = ?").run(Date.now(), uuid);
 
-        const fileStream = createReadStream(join(storagePath, uuid));
+        const fileStream = Bun.file(join(storagePath, uuid)).stream();
 
         set.headers["Cache-Control"] = `public, max-age=${maxAge / 1000}, immutable`;
 
-        // Handle file compression
-        fileStream.on("error", (streamError) => {
-            log.error("Error during file stream:", streamError);
-            fileStream.destroy();
-            return error(500, { success: false, cause: "Internal Server Error" });
-        });
-          
-        if (fileData.compressed === 1) {
-            const compressedStream = fileStream.pipe(createInflate());
-          
-            compressedStream.on("error", (compressionError) => {
-                log.error("Error during inflation stream:", compressionError);
-                fileStream.destroy();
-                compressedStream.destroy();
-                return error(500, { success: false, cause: "Internal Server Error" });
-            });
-          
-            return compressedStream;
-        } else {
-            return fileStream;
-        }
+        const passThrough = new PassThrough();
+
+        pipeline(
+            fileStream,
+            fileData.compressed === 1 ? createInflate() : new PassThrough(),
+            passThrough,
+            (passthroughError) => {
+                if (passthroughError) {
+                    log.error("Error in file pipeline:", passthroughError);
+                    passThrough.destroy();
+                    return error(500, { success: false, cause: "Internal Server Error" });
+                }
+            }
+        );
+
+        return passThrough;
     } catch (catchError) {
         log.error("Error while trying to return file:", catchError);
         return error(500, { success: false, cause: "Internal Server Error" });
