@@ -128,7 +128,7 @@ app.get("/info/:uuid?", async ({ params: { uuid }, error }) => {
         return {
             success: true,
             uuid,
-            hash,
+            hash: file.hash,
             size: file.size,
             expires: file.expires,
             accessed: file.accessed,
