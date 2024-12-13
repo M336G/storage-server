@@ -24,8 +24,7 @@ WORKDIR /app
 # Clone from the GitHub repository
 ARG BRANCH=main
 RUN git clone --branch ${BRANCH} https://github.com/M336G/storage-server.git . && \
-    git checkout ${BRANCH} && \
-    rm -rf .git
+    git checkout ${BRANCH}
 
 # Install dependencies while skipping development dependencies
 RUN rm -f package-lock.json bun.lockb && \
