@@ -111,7 +111,7 @@ app.get("/info/:uuid?", async ({ params: { uuid }, error }) => {
 
         if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
 
-        const file = db.prepare("SELECT size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
+        const file = db.prepare("SELECT hash, size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
         if (!file) return error(404, { success: false, cause: "This file doesn't exist!" });
 
         const now = Date.now();
