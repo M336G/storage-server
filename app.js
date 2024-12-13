@@ -1,5 +1,4 @@
 import { Elysia } from "elysia";
-import { Database } from "bun:sqlite";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { isURL, isBase64, isUUID } from "validator";
@@ -10,22 +9,11 @@ import axios from "axios";
 import { PassThrough, pipeline } from "stream";
 
 import { log } from "./util/functions.js";
+import { db } from "./util/database.js";
 import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
 import { version } from "./package.json";
 
 const maxStorageBytes = maxStorageSize ? maxStorageSize * 1024 * 1024 * 1024 : null // Convert from gigabytes to bytes
-
-let db;
-try {
-    db = new Database(join(__dirname, "data", "database.db"));
-    const initScript = await Bun.file(join(__dirname, "data", "database.sql")).text();
-    db.exec(initScript);
-    db.exec("PRAGMA journal_mode = WAL;");
-    log.info("Connected to SQLite and initialized tables if they didn't exist");
-} catch (catchError) {
-    log.error("Error initializing SQLite database:", catchError.message);
-    process.exit(1);
-}
 
 const PORT = process.env.PORT ? process.env.PORT : 3033;
 const TOKEN = process.env.TOKEN;
