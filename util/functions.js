@@ -1,5 +1,6 @@
 import { appendFile } from "node:fs/promises";
 import { join } from "path";
+import { createHash } from "node:crypto";
 
 const logFilePath = join(__dirname, "..", "logs.txt");
 
@@ -62,4 +63,9 @@ const log = {
     }
 };
 
-export { log };
+// Asynchronous function to get the SHA-256 hash of a file from a buffer
+async function getHashFromBuffer(buffer) {
+    return createHash("sha256").update(buffer).digest("hex");
+}
+
+export { log, getHashFromBuffer };

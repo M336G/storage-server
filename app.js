@@ -8,7 +8,7 @@ import { hostname } from "node:os";
 import axios from "axios";
 import { PassThrough, pipeline } from "stream";
 
-import { log } from "./util/functions.js";
+import { log, getHashFromBuffer } from "./util/functions.js";
 import { db } from "./util/database.js";
 import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
 import { version } from "./package.json";
@@ -128,6 +128,7 @@ app.get("/info/:uuid?", async ({ params: { uuid }, error }) => {
         return {
             success: true,
             uuid,
+            hash,
             size: file.size,
             expires: file.expires,
             accessed: file.accessed,
@@ -194,6 +195,10 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
             }
         }
 
+        const hash = await getHashFromBuffer(file);
+        const fileExists = db.prepare("SELECT ID FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
+        if (fileExists) return { success: true, uuid: fileExists.ID, hash, message: "This file already exists!" };
+
         if (enableCompression) {
             file = await new Promise((resolve, reject) => {
                 deflate(file, (error, buffer) => {
@@ -214,10 +219,10 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
         await Bun.write(filename, file);
         const compressed = enableCompression ? 1 : 0;
 
-        db.prepare("INSERT INTO storage (ID, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?)").run(uuid, Date.now(), file.length, expires, compressed);
+        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed);
 
         log.info(`New file added (${uuid})`);
-        return { success: true, uuid };
+        return { success: true, uuid, hash };
     } catch (catchError) {
         log.error("Error uploading file:", catchError);
         return error(500, { success: false, cause: "Internal Server Error" });
@@ -293,8 +298,30 @@ const checkInvalidFiles = async () => {
     }
 };
 
+const checkHashes = async () => {
+    const files = db.prepare("SELECT ID FROM storage WHERE hash IS null").all();
+
+    if (files.length > 0) {
+        for (const file of files) {
+            const filePath = join(storagePath, file.ID);
+            const hash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
+            db.prepare("UPDATE storage SET hash = ? WHERE ID = ?").run(hash, file.ID);
+        }
+
+        try {
+            log.info(`Stored the hash of ${files.length} files`);
+        } catch (error) {
+            log.error("Error storing file hashes in storage:", error);
+        }
+    }
+};
+
+checkExpiredFiles();
 setInterval(checkExpiredFiles, 1800000); // Check for expired/(old) unaccessed files every 30 minutes
+checkInvalidFiles();
 setInterval(checkInvalidFiles, 86400000); // Check for invalid files every day
+checkHashes();
+setInterval(checkHashes, 86400000); // Check for files that haven't gotten an hash every day
 
 process.on("unhandledRejection", (reason, promise) => {
     log.error(`Unhandled rejection at ${promise}:`, reason);
