@@ -1,7 +1,7 @@
 // i need to make sure this runs before anything else in the future
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
-import { join } from "path";
+import { join } from "node:path";
 
 import { log } from "./functions.js";
 

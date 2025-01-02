@@ -1,5 +1,4 @@
 import { appendFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 
 const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
 
@@ -99,7 +98,9 @@ const log = {
 
 // Asynchronous function to get the SHA-256 hash of a file from a buffer
 async function getHashFromBuffer(buffer) {
-    return createHash("sha256").update(buffer).digest("hex");
+    const hasher = new Bun.CryptoHasher("sha256");
+    
+    return hasher.update(buffer).digest("hex");
 }
 
 export { log, getHashFromBuffer };

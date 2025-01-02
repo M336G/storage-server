@@ -1,19 +1,18 @@
-import { Elysia } from "elysia";
-import { join } from "path";
-import { randomUUID } from "crypto";
-import { isURL, isBase64, isUUID } from "validator";
+import { join } from "node:path";
 import { deflate, createInflate } from "node:zlib";
 import { unlink } from "node:fs/promises";
 import { hostname } from "node:os";
-import axios from "axios";
-import { PassThrough, pipeline } from "stream";
+import { PassThrough, pipeline } from "node:stream";
+import { Elysia } from "elysia";
+import { isURL, isBase64, isUUID } from "validator";
 
 import { log, getHashFromBuffer } from "./util/functions.js";
 import { db } from "./util/database.js";
-import { storagePath, unaccessedDaysBeforeDeletion, maxStorageSize, enableCompression } from "./config.json";
 import { version } from "./package.json";
 
-const maxStorageBytes = maxStorageSize ? maxStorageSize * 1024 * 1024 * 1024 : null // Convert from gigabytes to bytes
+const storagePath = process.env.STORAGE_PATH ? process.env.STORAGE_PATH : "data/storage";
+
+const maxStorageBytes = process.env.MAX_STORAGE_SIZE ? Number(process.env.MAX_STORAGE_SIZE) * 1024 * 1024 * 1024 : null; // Convert from gigabytes to bytes
 
 const PORT = process.env.PORT ? process.env.PORT : 3033;
 const TOKEN = process.env.TOKEN;
@@ -186,20 +185,27 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
         if (file) file = Buffer.from(file, "base64");
 
         if (link) {
-            try {
-                const fileData = await axios.get(link, { responseType: "arraybuffer", headers: { "User-Agent": `StorageServer/${version}` } });
-                file = fileData.data;
-            } catch (axiosError) {
-                log.error("Failed to fetch file from URL:", axiosError);
+            const response = await fetch(link, 
+                {
+                    headers: {
+                        "User-Agent": `StorageServer/${version}`
+                    }
+                }
+            );
+            
+            if (!response.ok) {
+                log.error(`Failed to fetch file from URL with code ${response.status}:`, response.statusText);
                 return error(500, { success: false, cause: "Error fetching file from URL" });
             }
+
+            file = Buffer.from(await response.arrayBuffer());
         }
 
         const hash = await getHashFromBuffer(file);
         const fileExists = db.prepare("SELECT ID FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
         if (fileExists) return { success: true, uuid: fileExists.ID, hash, message: "This file already exists!" };
 
-        if (enableCompression) {
+        if (process.env.ENABLE_COMPRESSION ) {
             file = await new Promise((resolve, reject) => {
                 deflate(file, (error, buffer) => {
                     if (error) {
@@ -214,10 +220,16 @@ app.post("/upload", async ({ headers, body: { file, link, expires }, error }) =>
 
         if (maxStorageBytes && file.length > maxStorageBytes) return error(413, { success: false, cause: "File too large" });
 
-        const uuid = randomUUID();
+        if (!file || !file.length) {
+            log.error("File buffer is null or zero bytes");
+            return error(500, { success: false, cause: "Internal Server Error" });
+        }
+        
+        const uuid = crypto.randomUUID();
         const filename = join(storagePath, uuid);
         await Bun.write(filename, file);
-        const compressed = enableCompression ? 1 : 0;
+        
+        const compressed = process.env.ENABLE_COMPRESSION ? 1 : 0;
 
         db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed);
 
@@ -246,7 +258,7 @@ async function checkToken(token) {
 
 const checkExpiredFiles = async () => {
     const now = Date.now();
-    const unaccessedBeforeDeletion = now - ((unaccessedDaysBeforeDeletion ? unaccessedDaysBeforeDeletion : 999999999 /* Just prevent it from working if it's not set lmao */) * 24 * 60 * 60 * 1000); // From days to milliseconds
+    const unaccessedBeforeDeletion = now - ((process.env.UNACCESSED_DAYS_BEFORE_DELETION ? Number(process.env.UNACCESSED_DAYS_BEFORE_DELETION) : 999999999 /* Just prevent it from working if it's not set lmao */) * 24 * 60 * 60 * 1000); // From days to milliseconds
 
     // Fetch files that need to be deleted
     const files = db.prepare("SELECT ID FROM storage WHERE (expires IS NOT NULL AND expires < ?) OR (accessed IS NOT NULL AND accessed < ?) OR (accessed IS NULL AND timestamp < ?)").all(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
