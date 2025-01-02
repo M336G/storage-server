@@ -7,7 +7,7 @@ An easy to setup and optimized storing solution using Bun & Elysia.
 3. Run the project with `bun run start`.
 
 ## Recommandations
-It is recommended that you set this up with a Cloudflare reverse proxy for the best performances. You should also set a [token](https://github.com/M336G/storage-server/blob/29e8ce5c2624aafd61314ae54f4d26332c9e91ea/.env.example#L4) and a [maximum rate limit](https://github.com/M336G/storage-server/blob/29e8ce5c2624aafd61314ae54f4d26332c9e91ea/.env.example#L7) in your environement variables (create a .env file).
+It is recommended that you set this up with a Cloudflare reverse proxy for the best performances. You should also set a [token](https://github.com/M336G/storage-server/blob/2bb595189bccb120f55204682538f75511d67220/.env.example#L4) and a [maximum rate limit](https://github.com/M336G/storage-server/blob/2bb595189bccb120f55204682538f75511d67220/.env.example#L12) in your environement variables (create a .env file).
 
 ## Configuring
 See the notes in [.env.example](https://github.com/M336G/storage-server/blob/main/.env.example) if you want to configure your storage server further.
