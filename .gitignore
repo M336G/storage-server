@@ -138,3 +138,4 @@ logs.txt
 .env
 .DS_Store
 bun.lockb
+build/*
