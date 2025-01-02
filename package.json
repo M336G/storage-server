@@ -6,7 +6,8 @@
   "author": "M336",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "start": "bun app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2"
+    "start": "bun app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2",
+    "compile": "bun build --compile --target=bun-windows-x64 --minify --sourcemap --bytecode ./app.js --outfile ./build/storage-server_windows-x64.exe && bun build --compile --target=bun-darwin-x64 --minify --sourcemap --bytecode ./app.js --outfile ./build/storage-server_macos-x64 && bun build --compile --target=bun-darwin-arm64 --minify --sourcemap --bytecode ./app.js --outfile ./build/storage-server_macos-arm64 && bun build --compile --target=bun-linux-x64 --minify --sourcemap --bytecode ./app.js --outfile ./build/storage-server_linux-x64 && bun build --compile --target=bun-linux-arm64 --minify --sourcemap --bytecode ./app.js --outfile ./build/storage-server_linux-arm64"
   },
   "dependencies": {
     "elysia": "^1.2.9",

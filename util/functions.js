@@ -1,6 +1,8 @@
 import { appendFile } from "node:fs/promises";
+import { join, isAbsolute } from "node:path";
 
-const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
+const logFilePath = process.env.WRITE_LOGS ? (isAbsolute(process.env.WRITE_LOGS) ? process.env.WRITE_LOGS : join(process.cwd(), process.env.WRITE_LOGS)) : false;
+
 
 const logLevels = {
     "trace": 0,

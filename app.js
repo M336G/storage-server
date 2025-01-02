@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { deflate, createInflate } from "node:zlib";
 import { unlink } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -10,7 +10,7 @@ import { log, getHashFromBuffer } from "./util/functions.js";
 import { db } from "./util/database.js";
 import { version } from "./package.json";
 
-const storagePath = process.env.STORAGE_PATH ? process.env.STORAGE_PATH : "data/storage";
+const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_PATH) ? process.env.STORAGE_PATH : join(process.cwd(), process.env.STORAGE_PATH)) : join(process.cwd(), "data/storage");
 
 const maxStorageBytes = process.env.MAX_STORAGE_SIZE ? Number(process.env.MAX_STORAGE_SIZE) * 1024 * 1024 * 1024 : null; // Convert from gigabytes to bytes
 
