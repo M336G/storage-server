@@ -6,7 +6,8 @@
   "author": "M336",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "start": "bun app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2"
+    "start": "bun app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2",
+    "watch": "bun --watch app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2"
   },
   "dependencies": {
     "validator": "^13.12.0"
