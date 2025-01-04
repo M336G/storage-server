@@ -19,6 +19,7 @@ const logLevel = logLevels[logLevelString] !== undefined ? logLevels[logLevelStr
 const log = {
     // Log a fatal error
     fatal: async (message, fatal) => {
+        if (process.argv.includes('dev')) return console.error(message, fatal)
         const logMessage = `[FATAL] ${message}${fatal ? ` ${fatal}` : ""}`;
         try {
             if (logLevel <= 5) {
@@ -32,6 +33,7 @@ const log = {
 
     // Log an error
     error: async (message, error) => {
+        if (process.argv.includes('dev')) return console.error(message, error)
         const logMessage = `[ERROR] ${message}${error ? ` ${error}` : ""}`;
         try {
             if (logLevel <= 4) {
@@ -99,25 +101,29 @@ const log = {
 // Asynchronous function to get the SHA-256 hash of a file from a buffer
 async function getHashFromBuffer(buffer) {
     const hasher = new Bun.CryptoHasher("sha256");
-    
+
     return hasher.update(buffer).digest("hex");
 }
-
+/**
+ * 
+ * @param { Request } request 
+ * @returns 
+ */
 async function getClientIP(request) {
     const headers = request.headers
-  
+
     // Start by checking if Cloudflare forwarded the IP
-    const cfConnectingIP = headers.get("cf-connecting-ip");
+    let cfConnectingIP = headers.get("cf-connecting-ip");
     if (cfConnectingIP) return cfConnectingIP;
-  
+
     // Check if NGINX X-Real-IP is supplied if not
-    const xRealIP = headers.get("x-real-ip");
+    let xRealIP = headers.get("x-real-ip");
     if (xRealIP) return xRealIP;
-  
+
     // If not then also check if NGINX has supplied X-Forwarded-For, and return the first IP of the list
-    const xForwardedFor = headers.get("x-forwarded-for");
+    let xForwardedFor = headers.get("x-forwarded-for");
     if (xForwardedFor) return xForwardedFor.split(",")[0].trim();
-  
+
     // If none of them are supplied, just supply the original address in the request
     return request.remoteAddr;
 }

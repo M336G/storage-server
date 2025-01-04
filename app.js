@@ -1,5 +1,6 @@
 import { join, isAbsolute } from "node:path";
 import { unlink } from "node:fs/promises";
+import { serve } from 'bun'
 
 import { handlePing, handleFile, handleInfo, handleUpload } from "./util/web.js";
 import { log, getHashFromBuffer, getClientIP } from "./util/functions.js";
@@ -8,6 +9,7 @@ import { db } from "./util/database.js";
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats");
+else if (TOKEN == "AAAABBBBCCCCDDDD") log.warn("The server is currently running with the example token. It is extremely recommmended to set one secured!")
 
 const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_PATH) ? process.env.STORAGE_PATH : join(process.cwd(), process.env.STORAGE_PATH)) : join(process.cwd(), "data", "storage");
 
@@ -31,58 +33,45 @@ const routes = {
     }
 };
 
-const server = Bun.serve({
+const server = serve({
     port: Number(process.env.PORT) || 3033,
     maxRequestBodySize: process.env.MAXIMUM_UPLOAD_SIZE ? Number(process.env.MAXIMUM_UPLOAD_SIZE) * 1024 * 1024 * 1024 : undefined,
 
     async fetch(req) {
         const url = new URL(req.url);
-        const methodRoutes = routes[req.method];
-
         if (!url.pathname.startsWith("/ping") && !await rateLimit(req)) return new Response(JSON.stringify({ success: false, cause: `Rate limited` }), { headers: serverHeaders, status: 429 });
 
-        if (methodRoutes && Array.isArray(methodRoutes)) {
-            await Promise.all(methodRoutes.map(async (path) => {
-                if (url.pathname.startsWith(path)) {
-                    // Check for correct headers
-                    if (!(req.method == "GET" && url.pathname.startsWith("/file/"))) {
-                        for (const [header, value] of Object.entries(serverHeaders)) {
-                            if (req.headers.get(header) !== value) {
-                                return new Response(JSON.stringify({ success: false, cause: `Please supply "${value}" for your "${header}" header` }), { headers: serverHeaders, status: 400 });
-                            }
-                        }
-                    }
+        const methodRoutesObj = routes[req.method];
+        if (!methodRoutesObj) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
 
-                    // Check for token
-                    if (!(req.method == "GET" && url.pathname.startsWith("/file/")) && !url.pathname.startsWith("/ping") && !url.pathname.startsWith("/info")) {
-                        if (!await checkToken(req.headers.get("Authorization"))) {
-                            return new Response(JSON.stringify({ success: false, cause: "Unauthorized" }), { headers: serverHeaders, status: 401 });
-                        }
-                    }
-        
-                    return await methodRoutes[path](req, url);
-                }
-            }));
-        } else {
-            return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
+        let methodPath = (Object.keys(methodRoutesObj).filter(route => (route == '/file/') ? url.pathname.startsWith(route) : route == url.pathname) || [])[0]
+        if (!methodPath) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
+
+        // Check for token
+        if (!(req.method == "GET" && url.pathname.startsWith("/file/")) && !url.pathname.startsWith("/ping") && !url.pathname.startsWith("/info")) {
+            if (!await checkToken(req.headers.get("Authorization"))) {
+                return new Response(JSON.stringify({ success: false, cause: "Unauthorized" }), { headers: serverHeaders, status: 401 });
+            }
         }
+
+        return await methodRoutesObj[methodPath](req, url);
     }
 });
 
 // Clean up expired IP entries
 async function cleanExpiredIPEntries() {
-    await Promise.all(requestCounts.forEach((data, ip) => {
-        if (data.expiry < Date.now()) {
+    requestCounts.forEach(async (data, ip) => {
+        if (data?.expiry < Date.now()) {
             requestCounts.delete(ip);
         }
-    }));
+    });
 };
 
 // Middleware for rate limiting
 async function rateLimit(request) {
     if (!MAX_REQUESTS_PER_WINDOW) return true;
 
-    const ip = getClientIP(request);
+    const ip = await getClientIP(request) || 'unkownip'; // C'est possible que l'on puisse pas récupérer les ip avec bun à vérifier
     const now = Date.now();
 
     if (!requestCounts.has(ip)) {
@@ -152,7 +141,7 @@ const checkExpiredFiles = async () => {
 
 const checkInvalidFiles = async () => {
     const files = db.prepare("SELECT ID FROM storage").all();
-    
+
     if (files.length == 0) return;
 
     const deletionPromises = [];
@@ -195,21 +184,22 @@ const checkHashes = async () => {
     }
 };
 
-setInterval(cleanExpiredIPEntries, 60000); // Check for expired IP entries every minute
-
+setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 checkExpiredFiles();
-setInterval(checkExpiredFiles, 1800000); // Check for expired/(old) unaccessed files every 30 minutes
+setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
 checkInvalidFiles();
-setInterval(checkInvalidFiles, 86400000); // Check for invalid files every day
+setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
 checkHashes();
-setInterval(checkHashes, 86400000); // Check for files that haven't gotten an hash every day
+setInterval(checkHashes, 86_400_000); // Check for files that haven't gotten an hash every day
 
 process.on("unhandledRejection", (reason, promise) => {
-    log.fatal(`Unhandled rejection at ${promise}:`, reason);
-    process.exit(1);
+    log.fatal(`Unhandled rejection at ${promise}:`, reason).then(() => {
+        process.exit(1)
+    });
 });
 
 process.on("uncaughtException", (error) => {
-    log.fatal(`Uncaught exception:`, error);
-    process.exit(1);
+    log.fatal(`Uncaught exception:`, error).then(() => {
+        process.exit(1)
+    });
 });
