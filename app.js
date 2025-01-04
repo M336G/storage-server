@@ -52,7 +52,7 @@ const server = Bun.serve({
 
                     return await methodRoutes[path](req, url);
                 }
-            }
+            }))
         }
 
         return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
