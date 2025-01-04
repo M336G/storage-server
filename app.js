@@ -1,248 +1,106 @@
-import { join } from "node:path";
-import { deflate, createInflate } from "node:zlib";
+import { join, isAbsolute } from "node:path";
 import { unlink } from "node:fs/promises";
-import { hostname } from "node:os";
-import { PassThrough, pipeline } from "node:stream";
-import { Elysia } from "elysia";
-import { isURL, isBase64, isUUID } from "validator";
+import { serve } from 'bun'
 
-import { log, getHashFromBuffer } from "./util/functions.js";
+import { handlePing, handleFile, handleInfo, handleUpload } from "./util/web.js";
+import { log, getHashFromBuffer, getClientIP } from "./util/functions.js";
+import { serverHeaders } from "./util/utilities.js";
 import { db } from "./util/database.js";
-import { version } from "./package.json";
 
-const storagePath = process.env.STORAGE_PATH ? process.env.STORAGE_PATH : "data/storage";
-
-const maxStorageBytes = process.env.MAX_STORAGE_SIZE ? Number(process.env.MAX_STORAGE_SIZE) * 1024 * 1024 * 1024 : null; // Convert from gigabytes to bytes
-
-const PORT = process.env.PORT ? process.env.PORT : 3033;
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats");
+else if (TOKEN == "AAAABBBBCCCCDDDD") log.warn("The server is currently running with the example token. It is extremely recommmended to set one secured!")
 
-const startTimestamp = Date.now();
+const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_PATH) ? process.env.STORAGE_PATH : join(process.cwd(), process.env.STORAGE_PATH)) : join(process.cwd(), "data", "storage");
 
-const app = new Elysia({ serve: { maxRequestBodySize: 2 * 1024 * 1024 * 1024 } }); // 2 GB in bytes, max upload limit
+// Table kept in memory to follow requests
+const requestCounts = new Map();
 
-if (process.env.BEHIND_PROXY) app.use(require("elysia-ip").ip({ headersOnly: true }));
+const uuidRoutes = ['/file/','/info']
 
-// Rate limiting
-if (process.env.RATE_LIMIT) {
-    app.use(
-        require("elysia-rate-limit").rateLimit({
-            windowMs: 60 * 1000, // 1 minute
-            limit: process.env.RATE_LIMIT,
-            message: "Temporarily rate limited, please try again later."
-        })
-    );
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = process.env.RATE_LIMIT; // Maximum amount of requests per minute
+
+const routes = {
+    GET: {
+        "/ping": async (req, url) => await handlePing(req, url),
+        "/file/": async (req, url) => await handleFile(req, url),
+        "/info": async (req, url) => await handleInfo(req, url)
+    },
+    POST: {
+        "/upload": async (req, url) => await handleUpload(req, url),
+    },
+    DELETE: {
+        "/file/": async (req, url) => await handleFile(req, url),
+    }
+};
+
+const server = serve({
+    port: Number(process.env.PORT) || 3033,
+    maxRequestBodySize: process.env.MAXIMUM_UPLOAD_SIZE ? Number(process.env.MAXIMUM_UPLOAD_SIZE) * 1024 * 1024 * 1024 : undefined,
+
+    async fetch(req) {
+        const url = new URL(req.url);
+        if (!url.pathname.startsWith("/ping") && !await rateLimit(req)) return new Response(JSON.stringify({ success: false, cause: `Rate limited` }), { headers: serverHeaders, status: 429 });
+
+        const methodRoutesObj = routes[req.method];
+        if (!methodRoutesObj) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
+
+        let methodPath = (Object.keys(methodRoutesObj).filter(route => (uuidRoutes.includes(route)) ? url.pathname.startsWith(route) : route == url.pathname) || [])[0]
+        if (!methodPath) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
+
+        // Check for token
+        if (!(req.method == "GET" && url.pathname.startsWith("/file/")) && !url.pathname.startsWith("/ping") && !url.pathname.startsWith("/info")) {
+            if (!await checkToken(req.headers.get("Authorization"))) {
+                return new Response(JSON.stringify({ success: false, cause: "Unauthorized" }), { headers: serverHeaders, status: 401 });
+            }
+        }
+
+        return await methodRoutesObj[methodPath](req, url);
+    }
+});
+
+// Clean up expired IP entries
+async function cleanExpiredIPEntries() {
+    requestCounts.forEach(async (data, ip) => {
+        if (data?.expiry < Date.now()) {
+            requestCounts.delete(ip);
+        }
+    });
+};
+
+// Middleware for rate limiting
+async function rateLimit(request) {
+    if (!MAX_REQUESTS_PER_WINDOW) return true;
+
+    const ip = await getClientIP(request) || 'unkownip'; // C'est possible que l'on puisse pas récupérer les ip avec bun à vérifier
+    const now = Date.now();
+
+    if (!requestCounts.has(ip)) {
+        // New entry for this IP
+        requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
+        return true;
+    }
+
+    let entry = requestCounts.get(ip);
+
+    if (now > entry.expiry) {
+        // Expired window, reset data
+        requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
+        return true;
+    }
+
+    if (entry.count < MAX_REQUESTS_PER_WINDOW) {
+        // Increment the counter for this IP address
+        entry.count += 1;
+        return true;
+    }
+
+    // Limit reached
+    return false;
 }
 
-app.get("/file/:uuid?", async ({ set, params: { uuid }, error }) => {
-    try {
-        if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
-
-        if (!uuid) return error(400, { success: false, cause: "You can't just download the server!" });
-
-        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
-
-        const fileData = db.prepare("SELECT 1 as 'exists', expires, compressed FROM storage WHERE ID = ?").get(uuid);
-        if (!fileData) return error(404, { success: false, cause: "This file doesn't exist!" });
-
-        if (!await Bun.file(join(storagePath, uuid)).exists()) {
-            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-            return error(404, { success: false, cause: "This file doesn't exist!" });
-        }
-
-        const now = Date.now();
-        const expires = fileData.expires ? parseInt(fileData.expires, 10) : null;
-        const maxAge = expires ? (expires > now ? expires - now : -1) : 2592000000; // Default to 30 days
-
-        if (expires && maxAge <= 0) {
-            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-            await unlink(join(storagePath, uuid));
-            log.info(`Deleted expired file (${uuid})`);
-            return error(404, { success: false, cause: "This file doesn't exist!" });
-        }
-
-        db.prepare("UPDATE storage SET accessed = ? WHERE ID = ?").run(Date.now(), uuid);
-
-        const fileStream = Bun.file(join(storagePath, uuid)).stream();
-
-        set.headers["Cache-Control"] = `public, max-age=${maxAge / 1000}, immutable`;
-
-        const passThrough = new PassThrough();
-
-        pipeline(
-            fileStream,
-            fileData.compressed === 1 ? createInflate() : new PassThrough(),
-            passThrough,
-            (passthroughError) => {
-                if (passthroughError) {
-                    log.error("Error in file pipeline:", passthroughError);
-                    passThrough.destroy();
-                    return error(500, { success: false, cause: "Internal Server Error" });
-                }
-            }
-        );
-
-        return passThrough;
-    } catch (catchError) {
-        log.error("Error while trying to return file:", catchError);
-        return error(500, { success: false, cause: "Internal Server Error" });
-    }
-});
-
-app.get("/info/:uuid?", async ({ params: { uuid }, error }) => {
-    try {
-        if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
-
-        // Display information about the server instead if there is no UUID
-        if (!uuid) {
-            const info = db.prepare("SELECT COUNT(ID) as count, SUM(size) as size FROM storage").get();
-            return {
-                success: true,
-                name: process.env.HOSTNAME ? process.env.HOSTNAME : hostname(),
-                version,
-                start: startTimestamp,
-                count: info.count,
-                size: info.size,
-                maxSize: maxStorageBytes
-            }
-        }
-
-        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
-
-        const file = db.prepare("SELECT hash, size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
-        if (!file) return error(404, { success: false, cause: "This file doesn't exist!" });
-
-        const now = Date.now();
-        const expires = file.expires ? parseInt(file.expires, 10) : null;
-        const maxAge = expires ? (expires > now ? expires - now : -1) : 2592000000; // Default to 30 days
-
-        if (file.expires && maxAge <= 0) {
-            db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-            await unlink(join(storagePath, uuid));
-            log.info(`Deleted expired file (${uuid})`);
-            return error(404, { success: false, cause: "This file doesn't exist!" });
-        }
-
-        return {
-            success: true,
-            uuid,
-            hash: file.hash,
-            size: file.size,
-            expires: file.expires,
-            accessed: file.accessed,
-            timestamp: file.timestamp,
-        };
-    } catch (catchError) {
-        log.error("Error while trying to return file info:", catchError);
-        return error(500, { success: false, cause: "Internal Server Error" });
-    }
-});
-
-app.delete("/file/:uuid", async ({ headers, params: { uuid }, error }) => {
-    if (!await checkToken(headers.authorization)) return error(401, { success: false, cause: "Unauthorized" });
-    try {
-        uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
-
-        if (!uuid) return error(400, { success: false, cause: "You can't just delete the server!" });
-
-        if (!isUUID(uuid, 4)) return error(400, { success: false, cause: "Invalid UUID" });
-
-        const fileExist = db.prepare("SELECT 1 FROM storage WHERE ID = ?").get(uuid);
-        if (!fileExist) return { success: false, cause: "This file doesn't exist!" };
-
-        db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
-        await unlink(join(storagePath, uuid));
-        log.info(`Deleted file (${uuid})`);
-
-        return { success: true, uuid };
-    } catch (catchError) {
-        log.error("Error while trying to delete file:", catchError);
-        return error(500, { success: false, cause: "Internal Server Error" });
-    }
-});
-
-app.get("/ping", async ({ error }) => {
-    try {
-        return { timestamp: Date.now() };
-    } catch (catchError) {
-        log.error("Error while trying to ping:", catchError);
-        return error(500, { success: false, cause: "Internal Server Error" });
-    }
-});
-
-app.post("/upload", async ({ headers, body: { file, link, expires }, error }) => {
-    if (!await checkToken(headers.authorization)) return error(401, { success: false, cause: "Unauthorized" });
-    
-    try {
-        if (link) link = decodeURIComponent(link).replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, "");
-        if (!file && !link) return error(400, { success: false, cause: "Please at least send a file or a link!" });
-        if (expires && typeof expires !== "number") return error(422, { success: false, cause: "Make sure that the expires parameter is an integer" });
-        if (expires && expires <= Date.now()) return error(422, { success: false, cause: "Expiry timestamp must be above the current epoch timestamp" });
-
-        if (file && !isBase64(file)) return error(422, { success: false, cause: "Please send a base64 encoded file" });
-        if (link && !isURL(link)) return error(422, { success: false, cause: "Please send a valid URL" });
-        if (file) file = Buffer.from(file, "base64");
-
-        if (link) {
-            const response = await fetch(link, 
-                {
-                    headers: {
-                        "User-Agent": `StorageServer/${version}`
-                    }
-                }
-            );
-            
-            if (!response.ok) {
-                log.error(`Failed to fetch file from URL with code ${response.status}:`, response.statusText);
-                return error(500, { success: false, cause: "Error fetching file from URL" });
-            }
-
-            file = Buffer.from(await response.arrayBuffer());
-        }
-
-        const hash = await getHashFromBuffer(file);
-        const fileExists = db.prepare("SELECT ID FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
-        if (fileExists) return { success: true, uuid: fileExists.ID, hash, message: "This file already exists!" };
-
-        if (process.env.ENABLE_COMPRESSION ) {
-            file = await new Promise((resolve, reject) => {
-                deflate(file, (error, buffer) => {
-                    if (error) {
-                        log.error("Error while trying to compress a file:", error);
-                        resolve(null);
-                    }
-                    resolve(buffer);
-                });
-            });
-            if (!file) return error(500, { success: false, cause: "Internal Server Error" });
-        }
-
-        if (maxStorageBytes && file.length > maxStorageBytes) return error(413, { success: false, cause: "File too large" });
-
-        if (!file || !file.length) {
-            log.error("File buffer is null or zero bytes");
-            return error(500, { success: false, cause: "Internal Server Error" });
-        }
-        
-        const uuid = crypto.randomUUID();
-        const filename = join(storagePath, uuid);
-        await Bun.write(filename, file);
-        
-        const compressed = process.env.ENABLE_COMPRESSION ? 1 : 0;
-
-        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed);
-
-        log.info(`New file added (${uuid})`);
-        return { success: true, uuid, hash };
-    } catch (catchError) {
-        log.error("Error uploading file:", catchError);
-        return error(500, { success: false, cause: "Internal Server Error" });
-    }
-});
-
-
-app.listen(PORT, async () => { log.info(`Server is now running on ${PORT}`) });
+log.info(`Server is now running on ${server.port}`);
 
 async function checkToken(token) {
     try {
@@ -285,7 +143,7 @@ const checkExpiredFiles = async () => {
 
 const checkInvalidFiles = async () => {
     const files = db.prepare("SELECT ID FROM storage").all();
-    
+
     if (files.length == 0) return;
 
     const deletionPromises = [];
@@ -328,19 +186,22 @@ const checkHashes = async () => {
     }
 };
 
+setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 checkExpiredFiles();
-setInterval(checkExpiredFiles, 1800000); // Check for expired/(old) unaccessed files every 30 minutes
+setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
 checkInvalidFiles();
-setInterval(checkInvalidFiles, 86400000); // Check for invalid files every day
+setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
 checkHashes();
-setInterval(checkHashes, 86400000); // Check for files that haven't gotten an hash every day
+setInterval(checkHashes, 86_400_000); // Check for files that haven't gotten an hash every day
 
 process.on("unhandledRejection", (reason, promise) => {
-    log.fatal(`Unhandled rejection at ${promise}:`, reason);
-    process.exit(1);
+    log.fatal(`Unhandled rejection at ${promise}:`, reason).then(() => {
+        process.exit(1)
+    });
 });
 
 process.on("uncaughtException", (error) => {
-    log.fatal(`Uncaught exception:`, error);
-    process.exit(1);
+    log.fatal(`Uncaught exception:`, error).then(() => {
+        process.exit(1)
+    });
 });
