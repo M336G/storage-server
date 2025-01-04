@@ -103,4 +103,23 @@ async function getHashFromBuffer(buffer) {
     return hasher.update(buffer).digest("hex");
 }
 
-export { log, getHashFromBuffer };
+async function getClientIP(request) {
+    const headers = request.headers
+  
+    // Start by checking if Cloudflare forwarded the IP
+    const cfConnectingIP = headers.get("cf-connecting-ip");
+    if (cfConnectingIP) return cfConnectingIP;
+  
+    // Check if NGINX X-Real-IP is supplied if not
+    const xRealIP = headers.get("x-real-ip");
+    if (xRealIP) return xRealIP;
+  
+    // If not then also check if NGINX has supplied X-Forwarded-For, and return the first IP of the list
+    const xForwardedFor = headers.get("x-forwarded-for");
+    if (xForwardedFor) return xForwardedFor.split(",")[0].trim();
+  
+    // If none of them are supplied, just supply the original address in the request
+    return request.remoteAddr;
+}
+
+export { log, getHashFromBuffer, getClientIP };

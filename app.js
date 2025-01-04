@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { unlink } from "node:fs/promises";
 
 import { handlePing, handleFile, handleInfo, handleUpload } from "./util/web.js";
-import { log, getHashFromBuffer } from "./util/functions.js";
+import { log, getHashFromBuffer, getClientIP } from "./util/functions.js";
 import { serverHeaders } from "./util/utilities.js";
 import { db } from "./util/database.js";
 
@@ -10,6 +10,12 @@ const TOKEN = process.env.TOKEN;
 if (!TOKEN) log.warn("The server is currently running without any token. It is extremely recommended to set one to avoid potential threats");
 
 const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_PATH) ? process.env.STORAGE_PATH : join(process.cwd(), process.env.STORAGE_PATH)) : join(process.cwd(), "data", "storage");
+
+// Table kept in memory to follow requests
+const requestCounts = new Map();
+
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = process.env.RATE_LIMIT; // Maximum amount of requests per minute
 
 const routes = {
     GET: {
@@ -33,7 +39,9 @@ const server = Bun.serve({
         const url = new URL(req.url);
         const methodRoutes = routes[req.method];
 
-        if (methodRoutes) {
+        if (!url.pathname.startsWith("/ping") && !await rateLimit(req)) return new Response(JSON.stringify({ success: false, cause: `Rate limited` }), { headers: serverHeaders, status: 429 });
+
+        if (methodRoutes && Array.isArray(methodRoutes)) {
             await Promise.all(methodRoutes.map(async (path) => {
                 if (url.pathname.startsWith(path)) {
                     // Check for correct headers
@@ -47,30 +55,59 @@ const server = Bun.serve({
 
                     // Check for token
                     if (!(req.method == "GET" && url.pathname.startsWith("/file/")) && !url.pathname.startsWith("/ping") && !url.pathname.startsWith("/info")) {
-                        if (!await checkToken(req.headers.get("Authorization"))) return new Response(JSON.stringify({ success: false, cause: "Unauthorized" }), { headers: serverHeaders, status: 401 });
+                        if (!await checkToken(req.headers.get("Authorization"))) {
+                            return new Response(JSON.stringify({ success: false, cause: "Unauthorized" }), { headers: serverHeaders, status: 401 });
+                        }
                     }
-
+        
                     return await methodRoutes[path](req, url);
                 }
-            }))
+            }));
+        } else {
+            return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
         }
-
-        return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
     }
 });
 
-//if (process.env.BEHIND_PROXY) app.use(require("elysia-ip").ip({ headersOnly: true }));
+// Clean up expired IP entries
+async function cleanExpiredIPEntries() {
+    await Promise.all(requestCounts.forEach((data, ip) => {
+        if (data.expiry < Date.now()) {
+            requestCounts.delete(ip);
+        }
+    }));
+};
 
-// Rate limiting
-/*if (process.env.RATE_LIMIT) {
-    app.use(
-        require("elysia-rate-limit").rateLimit({
-            windowMs: 60 * 1000, // 1 minute
-            limit: process.env.RATE_LIMIT,
-            message: "Temporarily rate limited, please try again later."
-        })
-    );
-}*/
+// Middleware for rate limiting
+async function rateLimit(request) {
+    if (!MAX_REQUESTS_PER_WINDOW) return true;
+
+    const ip = getClientIP(request);
+    const now = Date.now();
+
+    if (!requestCounts.has(ip)) {
+        // New entry for this IP
+        requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
+        return true;
+    }
+
+    let entry = requestCounts.get(ip);
+
+    if (now > entry.expiry) {
+        // Expired window, reset data
+        requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
+        return true;
+    }
+
+    if (entry.count < MAX_REQUESTS_PER_WINDOW) {
+        // Increment the counter for this IP address
+        entry.count += 1;
+        return true;
+    }
+
+    // Limit reached
+    return false;
+}
 
 log.info(`Server is now running on ${server.port}`);
 
@@ -157,6 +194,8 @@ const checkHashes = async () => {
         }
     }
 };
+
+setInterval(cleanExpiredIPEntries, 60000); // Check for expired IP entries every minute
 
 checkExpiredFiles();
 setInterval(checkExpiredFiles, 1800000); // Check for expired/(old) unaccessed files every 30 minutes
