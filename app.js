@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { unlink } from "node:fs/promises";
 
 import { handlePing, handleFile, handleInfo, handleUpload } from "./util/web.js";

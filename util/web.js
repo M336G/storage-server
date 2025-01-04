@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { deflate, createInflate } from "node:zlib";
 import { unlink } from "node:fs/promises";
 import { hostname } from "node:os";
