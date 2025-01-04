@@ -6,14 +6,7 @@ LABEL name="storage-server" \
       description="An easy to setup and optimized storing solution using Bun & Elysia."
 
 # Environment variables
-ENV NODE_ENV=production \
-    HOSTNAME= \
-    TOKEN= \
-    PORT= \
-    RATE_LIMIT= \
-    BEHIND_PROXY= \
-    LOG_LEVEL= \
-    WRITE_LOGS=
+ENV NODE_ENV=production
 
 # Install necessary system dependencies and clean up cache
 RUN apt-get update && \
