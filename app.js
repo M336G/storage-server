@@ -16,6 +16,8 @@ const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_P
 // Table kept in memory to follow requests
 const requestCounts = new Map();
 
+const uuidRoutes = ['/file','/info']
+
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = process.env.RATE_LIMIT; // Maximum amount of requests per minute
 
@@ -44,7 +46,7 @@ const server = serve({
         const methodRoutesObj = routes[req.method];
         if (!methodRoutesObj) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
 
-        let methodPath = (Object.keys(methodRoutesObj).filter(route => (route == '/file/') ? url.pathname.startsWith(route) : route == url.pathname) || [])[0]
+        let methodPath = (Object.keys(methodRoutesObj).filter(route => (uuidRoutes.includes(route)) ? url.pathname.startsWith(route) : route == url.pathname) || [])[0]
         if (!methodPath) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
 
         // Check for token
