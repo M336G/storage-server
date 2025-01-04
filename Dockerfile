@@ -3,7 +3,7 @@ FROM oven/bun:latest
 # Metadata
 LABEL name="storage-server" \
       version="1.0.0" \
-      description="An easy to setup and optimized storing solution using Bun & Elysia."
+      description="An easy to setup and optimized storing solution using Bun."
 
 # Environment variables
 ENV NODE_ENV=production
