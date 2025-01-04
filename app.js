@@ -34,7 +34,7 @@ const server = Bun.serve({
         const methodRoutes = routes[req.method];
 
         if (methodRoutes) {
-            for (const path in methodRoutes) {
+            await Promise.all(methodRoutes.map(async (path) => {
                 if (url.pathname.startsWith(path)) {
                     // Check for correct headers
                     if (!(req.method == "GET" && url.pathname.startsWith("/file/"))) {
