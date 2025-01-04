@@ -16,7 +16,7 @@ const storagePath = process.env.STORAGE_PATH ? (isAbsolute(process.env.STORAGE_P
 // Table kept in memory to follow requests
 const requestCounts = new Map();
 
-const uuidRoutes = ['/file','/info']
+const uuidRoutes = ['/file/','/info']
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = process.env.RATE_LIMIT; // Maximum amount of requests per minute
