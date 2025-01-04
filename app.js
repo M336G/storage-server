@@ -204,12 +204,12 @@ setInterval(checkInvalidFiles, 86400000); // Check for invalid files every day
 checkHashes();
 setInterval(checkHashes, 86400000); // Check for files that haven't gotten an hash every day
 
-process.on("unhandledRejection", (reason, promise) => {
-    log.fatal(`Unhandled rejection at ${promise}:`, reason);
+process.on("unhandledRejection", async (reason, promise) => {
+    await log.fatal(`Unhandled rejection at ${promise}:`, reason);
     process.exit(1);
 });
 
-process.on("uncaughtException", (error) => {
-    log.fatal(`Uncaught exception:`, error);
+process.on("uncaughtException", async (error) => {
+    await log.fatal(`Uncaught exception:`, error);
     process.exit(1);
 });
