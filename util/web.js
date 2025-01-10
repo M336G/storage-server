@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { PassThrough, pipeline } from "node:stream";
 import { isURL, isBase64, isUUID } from "validator";
 
-import { log, getHashFromBuffer } from "./functions.js";
+import { log, getHashFromBuffer, generateAES128Key, encryptAES128, decryptAES128 } from "./functions.js";
 import { startupTime, serverHeaders } from "./utilities.js";
 import { db } from "./database.js";
 import { version } from "../package.json";
@@ -41,6 +41,7 @@ async function handleFile(req, url) {
     if (!url.pathname.startsWith("/file/")) return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
 
     let uuid = url.pathname.substring("/file/".length);
+    let key = url.searchParams.get("key");
 
     if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
     if (!uuid) return new Response(JSON.stringify({ success: false, cause: "You can't just use that on the whole server!" }), { headers: serverHeaders, status: 400 });
@@ -48,9 +49,11 @@ async function handleFile(req, url) {
 
     if (req.method == "GET") {
         try {    
-            const fileData = db.prepare("SELECT 1 as 'exists', expires, compressed FROM storage WHERE ID = ?").get(uuid);
+            const fileData = db.prepare("SELECT 1 as 'exists', expires, compressed, key FROM storage WHERE ID = ?").get(uuid);
             if (!fileData) return new Response(JSON.stringify({ success: false, cause: "This file doesn't exist!" }), { headers: serverHeaders, status: 404 });
     
+            if (fileData.key && (!key || fileData.key != key)) return new Response(JSON.stringify({ success: false, cause: "Incorrect decryption key!" }), { headers: serverHeaders, status: 401 });
+            
             if (!await Bun.file(join(storagePath, uuid)).exists()) {
                 db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
                 return new Response(JSON.stringify({ success: false, cause: "This file doesn't exist!" }), { headers: serverHeaders, status: 404 });
@@ -120,6 +123,7 @@ async function handleInfo(req, url) {
 
     try {
         let uuid = url.pathname.length > 6 ? url.pathname.substring("/info/".length) : null;
+        let key = url.searchParams.get("key");
 
         if (uuid) uuid = uuid.replace(/[^0-9a-fA-F-]/g, "");
 
@@ -143,8 +147,10 @@ async function handleInfo(req, url) {
 
         if (!isUUID(uuid, 4)) return new Response(JSON.stringify({ success: false, cause: "Invalid UUID" }), { headers: serverHeaders, status: 400 });
 
-        const file = db.prepare("SELECT hash, size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
+        const file = db.prepare("SELECT hash, size, expires, key, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
         if (!file) return new Response(JSON.stringify({ success: false, cause: "This file doesn't exist!" }), { headers: serverHeaders, status: 404 });
+
+        if (file.key && (!key || file.key != key)) return new Response(JSON.stringify({ success: false, cause: "Incorrect decryption key!" }), { headers: serverHeaders, status: 401 });
 
         const now = Date.now();
         const expires = file.expires ? parseInt(file.expires, 10) : null;
@@ -176,7 +182,7 @@ async function handleInfo(req, url) {
 };
 
 async function handleUpload(req, url) {
-    let { file, link, expires } = await req.json();
+    let { file, link, expires, encrypt } = await req.json();
 
     if (url.pathname != "/upload") return new Response(JSON.stringify({ success: false, cause: "No path found or invalid method" }), { headers: serverHeaders, status: 404 });
     if (req.method != "POST") return new Response(JSON.stringify({ success: false, cause: "Unallowed method!" }), { headers: serverHeaders, status: 400 });
@@ -225,6 +231,13 @@ async function handleUpload(req, url) {
             if (!file) return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
         }
 
+        const key = encrypt ? await generateAES128Key() : null;
+
+        if (encrypt && key) {
+            file = await encryptAES128(file, key);
+            if (!file) return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
+        }
+
         if (maxStorageBytes && file.length > maxStorageBytes) return new Response(JSON.stringify({ success: false, cause: "File too large" }), { headers: serverHeaders, status: 413 });
 
         if (!file || !file.length) {
@@ -238,10 +251,10 @@ async function handleUpload(req, url) {
         
         const compressed = process.env.ENABLE_COMPRESSION ? 1 : 0;
 
-        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed);
+        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed, key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed, key);
 
         log.info(`New file added (${uuid})`);
-        return new Response(JSON.stringify({ success: true, uuid, hash }), { headers: serverHeaders, status: 200 });
+        return new Response(JSON.stringify({ success: true, uuid, hash, key }), { headers: serverHeaders, status: 200 });
     } catch (catchError) {
         log.error("Error uploading file:", catchError);
         return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
