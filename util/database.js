@@ -1,17 +1,16 @@
-// i need to make sure this runs before anything else in the future
 import { Database } from "bun:sqlite";
-import { readdir } from "node:fs/promises";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { log } from "./functions.js";
 
 const migrationsPath = join(__dirname, "..", "data", "migrations");
 
-async function initializeDatabase() {
+function initializeDatabase() {
     try {
         const db = new Database(join(__dirname, "..", "data", "database.db"));
 
-        const files = await readdir(migrationsPath);
+        const files = readdirSync(migrationsPath);
         const sqlFiles = files.filter(file => file.endsWith(".sql"));
 
         sqlFiles.sort((a, b) => {
@@ -33,7 +32,7 @@ async function initializeDatabase() {
         // Execute migrations order from oldest to most recent
         for (const file of sqlFiles) {
             const filePath = join(migrationsPath, file);
-            const script = await Bun.file(filePath).text();
+            const script = readFileSync(filePath, "utf-8");
 
             try {
                 db.exec(script);
@@ -50,11 +49,11 @@ async function initializeDatabase() {
 
         return db;
     } catch (error) {
-        console.error("[ERROR] Error initializing SQLite database:", error); // process gets stopped before log.error is called so need to make it sync lol
+        log.error("Error initializing SQLite database:", error);
         process.exit(1);
     }
 }
 
-const db = await initializeDatabase();
+const db = initializeDatabase();
 
 export { db };
