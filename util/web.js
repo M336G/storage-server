@@ -75,7 +75,6 @@ async function handleFile(req, url) {
     
             pipeline(
                 fileStream,
-                fileData.compressed === 1 ? createInflate() : new PassThrough(),
                 passThrough,
                 (passthroughError) => {
                     if (passthroughError) {
@@ -86,11 +85,15 @@ async function handleFile(req, url) {
                 }
             );
     
-            return new Response(passThrough, {
-                headers: {
-                    "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`
-                }
-            });
+            const responseHeaders = {
+                "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`
+            };
+            
+            if (fileData.compressed == 1) {
+                responseHeaders["Content-Encoding"] = "deflate";
+            }
+
+            return new Response(passThrough, { headers: responseHeaders });
         } catch (error) {
             log.error("Error while trying to return file:", error);
             return new Response(JSON.stringify({ success: false, cause: "Error returning the file" }), { headers: serverHeaders, status: 500 });
