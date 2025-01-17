@@ -10,6 +10,13 @@ function initializeDatabase() {
     try {
         const db = new Database(join(__dirname, "..", "data", "database.db"));
 
+        db.exec(`CREATE TABLE IF NOT EXISTS migrations (
+                    "date" VARCHAR(8) NOT NULL UNIQUE,
+                    "timestamp" INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY("date")
+                )`
+        );
+
         const files = readdirSync(migrationsPath);
         const sqlFiles = files.filter(file => file.endsWith(".sql"));
 
@@ -31,14 +38,20 @@ function initializeDatabase() {
 
         // Execute migrations order from oldest to most recent
         for (const file of sqlFiles) {
-            const filePath = join(migrationsPath, file);
-            const script = readFileSync(filePath, "utf-8");
+            const migrationDate = file.substring(0, 10);
 
-            try {
-                db.exec(script);
-                completedMigrations += 1;
-            } catch (error) {
-                log.warn(`Skipped migration ${file}: ${error.message}`);
+            const migrationExists = db.prepare("SELECT 1 FROM migrations WHERE date = ?").get(migrationDate);
+            if (!migrationExists) {
+                const filePath = join(migrationsPath, file);
+                const script = readFileSync(filePath, "utf-8");
+    
+                try {
+                    db.exec(script);
+                    db.prepare("INSERT INTO migrations (date, timestamp) VALUES (?, ?)").run(migrationDate, Date.now());
+                    completedMigrations += 1;
+                } catch (error) {
+                    log.warn(`Skipped migration ${file}: ${error.message}`);
+                }
             }
         }
 

@@ -1,12 +1,13 @@
 import { join, isAbsolute } from "node:path";
-import { deflate, createInflate } from "node:zlib";
+import { deflate, gzip } from "node:zlib";
 import { unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import { PassThrough, pipeline } from "node:stream";
 import { isURL, isBase64, isUUID } from "validator";
+import { promisify } from "node:util";
 
 import { log, getHashFromBuffer } from "./functions.js";
-import { startupTime, serverHeaders } from "./utilities.js";
+import { startupTime, serverHeaders, contentEncoding } from "./utilities.js";
 import { db } from "./database.js";
 import { version } from "../package.json";
 
@@ -89,8 +90,8 @@ async function handleFile(req, url) {
                 "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`
             };
             
-            if (fileData.compressed == 1) {
-                responseHeaders["Content-Encoding"] = "deflate";
+            if (fileData.compressed >= 1) {
+                responseHeaders["Content-Encoding"] = contentEncoding[fileData.compressed];
             }
 
             return new Response(passThrough, { headers: responseHeaders });
@@ -146,7 +147,7 @@ async function handleInfo(req, url) {
 
         if (!isUUID(uuid, 4)) return new Response(JSON.stringify({ success: false, cause: "Invalid UUID" }), { headers: serverHeaders, status: 400 });
 
-        const file = db.prepare("SELECT hash, size, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
+        const file = db.prepare("SELECT hash, compressedHash, size, compressed, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
         if (!file) return new Response(JSON.stringify({ success: false, cause: "This file doesn't exist!" }), { headers: serverHeaders, status: 404 });
 
         const now = Date.now();
@@ -164,6 +165,8 @@ async function handleInfo(req, url) {
             success: true,
             uuid,
             hash: file.hash,
+            compressedHash: file.compressedHash,
+            compression: contentEncoding[file.compressed],
             size: file.size,
             expires: file.expires,
             accessed: file.accessed,
@@ -212,20 +215,33 @@ async function handleUpload(req, url) {
         }
 
         const hash = await getHashFromBuffer(file);
-        const fileExists = db.prepare("SELECT ID FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
-        if (fileExists) return new Response(JSON.stringify({ success: true, uuid: fileExists.ID, hash, message: "This file already exists!" }), { headers: serverHeaders, status: 200 });
+        const fileExists = db.prepare("SELECT ID, compressedHash FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
+        if (fileExists) return new Response(JSON.stringify({ success: true, uuid: fileExists.ID, hash, compressedHash: fileExists.compressedHash, message: "This file already exists!" }), { headers: serverHeaders, status: 200 });
 
-        if (process.env.ENABLE_COMPRESSION) {
-            file = await new Promise((resolve, reject) => {
-                deflate(file, (error, buffer) => {
-                    if (error) {
-                        log.error("Error while trying to compress a file:", error);
-                        resolve(null);
-                    }
-                    resolve(buffer);
-                });
-            });
-            if (!file) return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
+        // Compression stuff
+        const compressed = Number(process.env.COMPRESSION_ALGORITHM) >= 1 && Number(process.env.COMPRESSION_ALGORITHM) <= 2 ? Number(process.env.COMPRESSION_ALGORITHM) >= 1 && Number(process.env.COMPRESSION_ALGORITHM) : 0;
+
+        if (compressed >= 1) {
+            try {
+                const compressionLevel = Number(process.env.COMPRESSION_LEVEL) ? Number(process.env.COMPRESSION_LEVEL) : null;
+
+                switch (compressed) {
+                    case 1:
+                        file = await promisify(deflate)(file, { level: compressionLevel >= 1 && compressionLevel <= 9 ? compressionLevel : undefined });
+                        break;
+                    case 2:
+                        file = await promisify(gzip)(file, { level: compressionLevel >= 1 && compressionLevel <= 9 ? compressionLevel : undefined });
+                        break;
+                    default:
+                        log.error("Unsupported compression algorithm");
+                        return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
+                }
+                if (!file) return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
+            }
+            catch (error) {
+                log.error("Error compressing file:", error);
+                return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
+            }
         }
 
         if (maxStorageBytes && file.length > maxStorageBytes) return new Response(JSON.stringify({ success: false, cause: "File too large" }), { headers: serverHeaders, status: 413 });
@@ -234,17 +250,16 @@ async function handleUpload(req, url) {
             log.error("File buffer is null or zero bytes");
             return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });
         }
-        
+
         const uuid = crypto.randomUUID();
+        const compressedHash = compressed >= 1 ? await getHashFromBuffer(file) : null;
         const filename = join(storagePath, uuid);
         await Bun.write(filename, file);
-        
-        const compressed = process.env.ENABLE_COMPRESSION ? 1 : 0;
 
-        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed);
+        db.prepare("INSERT INTO storage (ID, hash, compressedHash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?, ?)").run(uuid, hash, compressedHash, Date.now(), file.length, expires, compressed);
 
         log.info(`New file added (${uuid})`);
-        return new Response(JSON.stringify({ success: true, uuid, hash }), { headers: serverHeaders, status: 200 });
+        return new Response(JSON.stringify({ success: true, uuid, hash, compressedHash }), { headers: serverHeaders, status: 200 });
     } catch (catchError) {
         log.error("Error uploading file:", catchError);
         return new Response(JSON.stringify({ success: false, cause: "Internal Server Error" }), { headers: serverHeaders, status: 500 });

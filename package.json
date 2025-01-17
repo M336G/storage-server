@@ -1,7 +1,7 @@
 {
   "name": "storage-server",
-  "description": "An easy to setup and optimized storing solution using Bun & Elysia.",
-  "version": "1.4.1",
+  "description": "An easy to setup and optimized storing solution using Bun.",
+  "version": "1.5.0",
   "main": "app.js",
   "author": "M336",
   "license": "AGPL-3.0-only",
