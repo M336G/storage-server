@@ -269,7 +269,7 @@ async function handleUpload(req, url) {
         const filename = join(storagePath, uuid);
         await Bun.write(filename, file);
 
-        db.prepare("INSERT INTO storage (ID, hash, timestamp, size, expires, compressed, key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(uuid, hash, Date.now(), file.length, expires, compressed, key);
+        db.prepare("INSERT INTO storage (ID, hash, compressedHash, timestamp, size, expires, compressed, key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(uuid, hash, compressedHash, Date.now(), file.length, expires, compressed, key);
 
         log.info(`New file added (${uuid})`);
         return new Response(JSON.stringify({ success: true, uuid, hash, key }), { headers: serverHeaders, status: 200 });
