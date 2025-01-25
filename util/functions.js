@@ -128,4 +128,58 @@ async function getClientIP(request) {
     return request.remoteAddr;
 }
 
-export { log, getHashFromBuffer, getClientIP };
+async function generateAES128Key() {
+    const key = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 128 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+    const rawKey = await crypto.subtle.exportKey("raw", key);
+
+    return Buffer.from(rawKey).toString("hex");
+}
+
+async function encryptAES128(file, keyHex) {
+    const keyBuffer = Buffer.from(keyHex, "hex");
+    const key = await crypto.subtle.importKey(
+        "raw",
+        keyBuffer,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt"]
+    );
+  
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        file
+    );
+  
+    return Buffer.concat([iv, Buffer.from(encrypted)]).toString("hex");
+}
+
+async function decryptAES128(encryptedHex, keyHex) {
+    const encryptedBuffer = Buffer.from(encryptedHex, "hex");
+    const iv = encryptedBuffer.slice(0, 12); // TODO: replace this with something not deprecated
+    const data = encryptedBuffer.slice(12); // TODO: replace this with something not deprecated
+  
+    const keyBuffer = Buffer.from(keyHex, "hex");
+    const key = await crypto.subtle.importKey(
+        "raw",
+        keyBuffer,
+        { name: "AES-GCM" },
+        false,
+        ["decrypt"]
+    );
+  
+    const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        data
+    );
+  
+    return Buffer.from(decrypted);
+}
+
+export { log, getHashFromBuffer, getClientIP, generateAES128Key, encryptAES128, decryptAES128 };
