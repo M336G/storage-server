@@ -134,7 +134,7 @@ const checkExpiredFiles = async () => {
         // Wait for all deletions to complete
         try {
             await Promise.all(fsDeletionPromises);
-            log.info(`Deleted expired/(old) unaccessed files (${files.length} files)`);
+            log.info(`Deleted expired/(old) unaccessed file(s) (${files.length} file(s)`);
         } catch (error) {
             log.error("Error deleting files from storage:", error);
         }
@@ -162,7 +162,7 @@ const checkInvalidFiles = async () => {
     // Wait for all deletions to complete
     try {
         await Promise.all(deletionPromises);
-        if (deletionPromises.length > 0) log.info(`Deleted invalid files (${deletionPromises.length} files)`);
+        if (deletionPromises.length > 0) log.info(`Deleted invalid file(s) (${deletionPromises.length} file(s))`);
     } catch (error) {
         log.error("Error deleting invalid files from the database:", error);
     }
@@ -179,29 +179,47 @@ const checkHashes = async () => {
         }
 
         try {
-            log.info(`Stored the hash of ${files.length} files`);
+            log.info(`Stored the hash of ${files.length} file(s)`);
         } catch (error) {
             log.error("Error storing file hashes in storage:", error);
         }
     }
 };
 
+// Broken for whatever reasons
+/*const checkCompressedHashes = async () => {
+    const files = db.prepare("SELECT ID FROM storage WHERE compressed >= 1 AND compressedHash IS NULL").all();
+
+    if (files.length > 0) {
+        for (const file of files) {
+            const filePath = join(storagePath, file.ID);
+            const compressedHash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
+            db.prepare("UPDATE storage SET compressedHash = ? WHERE ID = ?").run(compressedHash, file.ID);
+        }
+
+        try {
+            log.info(`Stored the compressed hash of ${files.length} file(s)`);
+        } catch (error) {
+            log.error("Error storing compressed file hashes in storage:", error);
+        }
+    }
+};*/
+
 setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 checkExpiredFiles();
 setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
 checkInvalidFiles();
 setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
-checkHashes();
-setInterval(checkHashes, 86_400_000); // Check for files that haven't gotten an hash every day
 
-process.on("unhandledRejection", (reason, promise) => {
-    log.fatal(`Unhandled rejection at ${promise}:`, reason).then(() => {
-        process.exit(1)
-    });
+checkHashes(); // Check for files that haven't gotten an hash on startup
+//checkCompressedHashes(); // Check for compressed files that haven't gotten an hash on startup
+
+process.on("unhandledRejection", async (reason, promise) => {
+    await log.fatal(`Unhandled rejection at ${promise}:`, reason);
+    process.exit(1);
 });
 
-process.on("uncaughtException", (error) => {
-    log.fatal(`Uncaught exception:`, error).then(() => {
-        process.exit(1)
-    });
+process.on("uncaughtException", async (error) => {
+    await log.fatal(`Uncaught exception:`, error);
+    process.exit(1);
 });
