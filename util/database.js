@@ -1,72 +1,95 @@
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { db } from "./initializeDatabase.js";
 
-import { log } from "./functions.js";
+export const DatabaseWrapper = {
+    checkFileExistenceFromUUID: async (uuid) => {
+        const fileExists = db.prepare("SELECT 1 FROM storage WHERE ID = ?").get(uuid);
 
-const migrationsPath = join(__dirname, "..", "data", "migrations");
+        if (fileExists) return true;
+        else return false;
+    },
 
-function initializeDatabase() {
-    try {
-        const db = new Database(join(__dirname, "..", "data", "database.db"));
+    deleteFileFromUUID: async (uuid) => {
+        const result = db.prepare("DELETE FROM storage WHERE ID = ?").run(uuid);
 
-        db.exec(`CREATE TABLE IF NOT EXISTS migrations (
-                    "date" VARCHAR(8) NOT NULL UNIQUE,
-                    "timestamp" INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY("date")
-                )`
-        );
+        if (result.changes > 0) return true;
+        else throw new Exception(`Could not delete \"${uuid}\" from the database`);
+    },
 
-        const files = readdirSync(migrationsPath);
-        const sqlFiles = files.filter(file => file.endsWith(".sql"));
+    updateLastAccessFromUUID: async (uuid) => {
+        const result = db.prepare("UPDATE storage SET accessed = ? WHERE ID = ?").run(Date.now(), uuid);
 
-        sqlFiles.sort((a, b) => {
-            const dateA = a.substring(0, 10);
-            const dateB = b.substring(0, 10);
+        if (result.changes > 0) return true;
+        else throw new Exception(`Could not update \"${uuid}\"'s last access time`);
+    },
 
-            // Convert to Date objects
-            const [dayA, monthA, yearA] = dateA.split("-").map(Number);
-            const [dayB, monthB, yearB] = dateB.split("-").map(Number);
+    getTotalAmountOfFiles: async () => {
+        const totalAmountOfFiles = db.prepare("SELECT COUNT(ID) as count FROM storage").get();
 
-            const dateObjA = new Date(yearA, monthA - 1, dayA);
-            const dateObjB = new Date(yearB, monthB - 1, dayB);
+        if (totalAmountOfFiles) return totalAmountOfFiles.count;
+        else throw new Exception(`Could not get the total amount of files in the database`);
+    },
 
-            return dateObjA - dateObjB;
-        });
+    getTotalSize: async () => {
+        const totalSize = db.prepare("SELECT SUM(size) as size FROM storage").get();
 
-        let completedMigrations = 0;
+        if (totalSize) return totalSize.size;
+        else throw new Exception(`Could not get the total size of the database`);
+    },
 
-        // Execute migrations order from oldest to most recent
-        for (const file of sqlFiles) {
-            const migrationDate = file.substring(0, 10);
-
-            const migrationExists = db.prepare("SELECT 1 FROM migrations WHERE date = ?").get(migrationDate);
-            if (!migrationExists) {
-                const filePath = join(migrationsPath, file);
-                const script = readFileSync(filePath, "utf-8");
+    getFileMetadataFromUUID: async (uuid) => {
+        const metadata = db.prepare("SELECT ID, hash, compressedHash, size, compressed, expires, accessed, timestamp FROM storage WHERE ID = ?").get(uuid);
     
-                try {
-                    db.exec(script);
-                    db.prepare("INSERT INTO migrations (date, timestamp) VALUES (?, ?)").run(migrationDate, Date.now());
-                    completedMigrations += 1;
-                } catch (error) {
-                    log.warn(`Skipped migration ${file}: ${error.message}`);
-                }
-            }
-        }
+        if (metadata) return metadata;
+        else throw new Exception(`Could not get \"${uuid}\"'s metadata`);
+    },
 
-        if (completedMigrations > 0) log.info(`Successfully ran ${completedMigrations} SQLite migrations`);
+    getFileMetadataFromHash: async (hash) => {
+        const metadata = db.prepare("SELECT ID, hash, compressedHash, size, compressed, expires, accessed, timestamp FROM storage WHERE hash = ? ORDER BY timestamp DESC LIMIT 1").get(hash);
+    
+        if (metadata) return metadata;
+        else throw new Exception(`Could not get \"${hash}\"'s metadata`);
+    },
 
-        db.exec("PRAGMA journal_mode = WAL;");
-        log.info("Connected to SQLite");
+    checkFileExistenceFromHash: async (hash) => {
+        const fileExists = db.prepare("SELECT 1 FROM storage WHERE hash = ?").get(hash);
 
-        return db;
-    } catch (error) {
-        log.error("Error initializing SQLite database:", error);
-        process.exit(1);
+        if (fileExists) return true;
+        else return false;
+    },
+    addFile: async (uuid, hash, compressedHash, size, expires, compressed, ) => {
+        const result = db.prepare("INSERT INTO storage (ID, hash, compressedHash, timestamp, size, expires, compressed) VALUES (?, ?, ?, ?, ?, ?, ?)").run(uuid, hash, compressedHash, Date.now(), size, expires, compressed);
+
+        if (result.changes > 0) return true;
+        else throw new Exception(`Could not add a file to the database`);
+    },
+    getAllFileIDs: async () => {
+        const files = db.prepare("SELECT ID FROM storage").all();
+
+        if (files) return files;
+        else throw new Exception(`Could not fetch all file IDs from the database`);
+    },
+    getExpiredFiles: async (timestamp, unaccessedBeforeDeletion) => {
+        const expiredFiles = db.prepare("SELECT ID FROM storage WHERE (expires IS NOT NULL AND expires < ?) OR (accessed IS NOT NULL AND accessed < ?) OR (accessed IS NULL AND timestamp < ?)").all(timestamp, unaccessedBeforeDeletion, unaccessedBeforeDeletion)
+    
+        if (expiredFiles) return expiredFiles;
+        else throw new Exception(`Could not fetch expired files from the database`);
+    },
+    deleteExpiredFiles: async (timestamp, unaccessedBeforeDeletion) => {
+        const result = db.prepare("DELETE FROM storage WHERE (expires IS NOT NULL AND expires < ?) OR (accessed IS NOT NULL AND accessed < ?) OR (accessed IS NULL AND timestamp < ?)").run(timestamp, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+    
+        if (result.changes > 0) return true;
+        else throw new Exception(`Could not delete expired files from the database`);
+    },
+    getFileIDsWithoutHash: async () => {
+        const expiredFiles = db.prepare("SELECT ID FROM storage WHERE hash IS null").all()
+    
+        if (expiredFiles) return expiredFiles;
+        else throw new Exception(`Could not fetch expired files from the database`);
+    },
+    updateHashFromUUID: async (hash, uuid) => {
+        const result = db.prepare("UPDATE storage SET hash = ? WHERE ID = ?").run(hash, uuid);
+
+        if (result.changes > 0) return true;
+        else throw new Exception(`Could not update \"${uuid}\"'s hash`);
     }
 }
-
-const db = initializeDatabase();
-
-export { db };

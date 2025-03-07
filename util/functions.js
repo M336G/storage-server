@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { appendFile } from "node:fs/promises";
+import { DatabaseWrapper } from "./database.js";
 
 const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
 
@@ -128,4 +130,99 @@ async function getClientIP(request) {
     return request.remoteAddr;
 }
 
-export { log, getHashFromBuffer, getClientIP };
+async function checkToken(token) {
+    try {
+        if (global.serverToken) {
+            if (!token || token != `Bearer ${global.serverToken}`) return false;
+        }
+        return true;
+    } catch (error) {
+        log.error("Error while verifying token:", error);
+        return false;
+    }
+}
+
+const checkExpiredFiles = async () => {
+    if (!unaccessedMillisecondsBeforeDeletion) return;
+
+    const now = Date.now();
+    const unaccessedBeforeDeletion = now - unaccessedMillisecondsBeforeDeletion;
+
+    // Fetch files that need to be deleted
+    const files = await DatabaseWrapper.getExpiredFiles(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+
+    if (files.length > 0) {
+        // Delete expired files from the database
+        await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+
+        // Prepare deletion promises for the files
+        const fsDeletionPromises = files.map(row => {
+            const uuid = row.ID;
+            return unlink(join(global.storagePath, uuid));
+        });
+
+        // Wait for all deletions to complete
+        try {
+            await Promise.all(fsDeletionPromises);
+            log.info(`Deleted expired/(old) unaccessed file(s) (${files.length} file(s))`);
+        } catch (error) {
+            log.error("Error deleting files from storage:", error);
+        }
+    }
+};
+
+const checkInvalidFiles = async () => {
+    const files = await DatabaseWrapper.getAllFileIDs();
+
+    if (files.length == 0) return;
+
+    const deletionPromises = [];
+
+    for (const row of files) {
+        const uuid = row.ID;
+        const filePath = join(global.storagePath, uuid);
+
+        if (!await Bun.file(filePath).exists()) {
+            deletionPromises.push(
+                await DatabaseWrapper.deleteFileFromUUID(uuid)
+            );
+        }
+    }
+
+    // Wait for all deletions to complete
+    try {
+        await Promise.all(deletionPromises);
+        if (deletionPromises.length > 0) log.info(`Deleted invalid file(s) (${deletionPromises.length} file(s))`);
+    } catch (error) {
+        log.error("Error deleting invalid files from the database:", error);
+    }
+};
+
+const checkHashes = async () => {
+    try {
+        const files = await DatabaseWrapper.getFileIDsWithoutHash();
+
+        if (files.length > 0) {
+            for (const file of files) {
+                const filePath = join(global.storagePath, file.ID);
+                const hash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
+
+                await DatabaseWrapper.updateHashFromUUID(hash, file.ID);
+            }
+            log.info(`Stored the hash of ${files.length} file(s)`);
+        }
+    } catch (error) {
+        log.error("Error storing file hashes in storage:", error);
+    }
+};
+
+// Clean up expired IP entries
+async function cleanExpiredIPEntries() {
+    global.requestCounts.forEach(async (data, ip) => {
+        if (data?.expiry < Date.now()) {
+            global.requestCounts.delete(ip);
+        }
+    });
+};
+
+export { log, getHashFromBuffer, getClientIP, checkToken, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries };
