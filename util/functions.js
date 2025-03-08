@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { appendFile } from "node:fs/promises";
+import { appendFile, unlink } from "node:fs/promises";
 import { DatabaseWrapper } from "./database.js";
 
 const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
@@ -149,11 +149,11 @@ const checkExpiredFiles = async () => {
     const unaccessedBeforeDeletion = now - global.unaccessedMillisecondsBeforeDeletion;
 
     // Fetch files that need to be deleted
-    const files = await DatabaseWrapper.getExpiredFiles(now, global.unaccessedMillisecondsBeforeDeletion);
+    const files = await DatabaseWrapper.getExpiredFiles(now, unaccessedBeforeDeletion);
 
     if (files.length > 0) {
         // Delete expired files from the database
-        await DatabaseWrapper.deleteExpiredFiles(now, global.unaccessedMillisecondsBeforeDeletion);
+        await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion);
 
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
