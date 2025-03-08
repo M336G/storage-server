@@ -297,12 +297,12 @@ checkHashes(); // Check for files that haven't gotten an hash on startup
 
 process.on("unhandledRejection", async (reason, promise) => {
     await log.fatal(reason);
-    await server.stop();
-    process.exit(1);
+    //await server.stop();
+    //process.exit(1);
 });
 
 process.on("uncaughtException", async (error) => {
     await log.fatal(error);
-    await server.stop();
-    process.exit(1);
+    //await server.stop();
+    //process.exit(1);
 });
