@@ -158,7 +158,7 @@ const checkExpiredFiles = async () => {
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
             const uuid = row.ID;
-            return unlink(join(global.storagePath, uuid));
+            return unlink(join(global.storagePath, uuid)).catch(() => ({})) || {};;
         });
 
         // Wait for all deletions to complete
