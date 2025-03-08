@@ -6,7 +6,7 @@ import { deflate, gzip } from "node:zlib";
 import { isURL, isBase64, isUUID } from "validator";
 import { promisify } from "node:util";
 
-import { log, getHashFromBuffer, getClientIP, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries, checkToken } from "./util/functions.js";
+import { log, getHashFromBuffer, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries, checkToken, rateLimit } from "./util/functions.js";
 import { contentEncoding } from "./util/utilities.js";
 import { DatabaseWrapper } from "./util/database.js";
 
@@ -24,10 +24,10 @@ else if (global.serverToken == "AAAABBBBCCCCDDDD") log.warn("The server is curre
 // Table kept in memory to follow requests
 global.requestCounts = new Map();
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = process.env.RATE_LIMIT; // Maximum amount of requests per minute
+global.rateLimitWindowMs = 60 * 1000; // 1 minute
+global.maxRequestsPerWindow = process.env.RATE_LIMIT; // Maximum amount of requests per minute
 
-Bun.serve({
+const server = Bun.serve({
     port: global.serverPort,
     maxRequestBodySize: global.maximumUploadSize,
 
@@ -285,38 +285,7 @@ Bun.serve({
 });
 
 global.startupTime = Date.now();
-log.info(`Server is now running on ${global.serverPort}`);
-
-// Middleware for rate limiting
-async function rateLimit(request) {
-    if (!MAX_REQUESTS_PER_WINDOW) return true;
-
-    const ip = await getClientIP(request) || 'unkownip'; // C'est possible que l'on puisse pas récupérer les ip avec bun à vérifier
-    const now = Date.now();
-
-    if (!global.requestCounts.has(ip)) {
-        // New entry for this IP
-        global.requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
-        return true;
-    }
-
-    let entry = global.requestCounts.get(ip);
-
-    if (now > entry.expiry) {
-        // Expired window, reset data
-        global.requestCounts.set(ip, { count: 1, expiry: now + RATE_LIMIT_WINDOW_MS });
-        return true;
-    }
-
-    if (entry.count < MAX_REQUESTS_PER_WINDOW) {
-        // Increment the counter for this IP address
-        entry.count += 1;
-        return true;
-    }
-
-    // Limit reached
-    return false;
-}
+log.info(`Server is now running on ${server.port}`);
 
 setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 checkExpiredFiles();
@@ -327,11 +296,13 @@ setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
 checkHashes(); // Check for files that haven't gotten an hash on startup
 
 process.on("unhandledRejection", async (reason, promise) => {
-    await log.fatal(`Unhandled rejection at ${promise}:`, reason);
+    await log.fatal(reason);
     await server.stop();
+    process.exit(1);
 });
 
 process.on("uncaughtException", async (error) => {
-    await log.fatal(`Uncaught exception:`, error);
+    await log.fatal(error);
     await server.stop();
+    process.exit(1);
 });

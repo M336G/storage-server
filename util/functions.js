@@ -143,17 +143,17 @@ async function checkToken(token) {
 }
 
 const checkExpiredFiles = async () => {
-    if (!unaccessedMillisecondsBeforeDeletion) return;
+    if (!global.unaccessedMillisecondsBeforeDeletion || global.unaccessedMillisecondsBeforeDeletion == "0") return;
 
     const now = Date.now();
-    const unaccessedBeforeDeletion = now - unaccessedMillisecondsBeforeDeletion;
+    const unaccessedBeforeDeletion = now - global.unaccessedMillisecondsBeforeDeletion;
 
     // Fetch files that need to be deleted
-    const files = await DatabaseWrapper.getExpiredFiles(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+    const files = await DatabaseWrapper.getExpiredFiles(now, global.unaccessedMillisecondsBeforeDeletion);
 
     if (files.length > 0) {
         // Delete expired files from the database
-        await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion, unaccessedBeforeDeletion);
+        await DatabaseWrapper.deleteExpiredFiles(now, global.unaccessedMillisecondsBeforeDeletion);
 
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
@@ -225,4 +225,35 @@ async function cleanExpiredIPEntries() {
     });
 };
 
-export { log, getHashFromBuffer, getClientIP, checkToken, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries };
+// Middleware for rate limiting
+async function rateLimit(request) {
+    if (!global.maxRequestsPerWindow || global.maxRequestsPerWindow == "0") return true;
+
+    const ip = await getClientIP(request) || 'unknownip'; // C'est possible que l'on puisse pas récupérer les ip avec bun à vérifier
+    const now = Date.now();
+
+    if (!global.requestCounts.has(ip)) {
+        // New entry for this IP
+        global.requestCounts.set(ip, { count: 1, expiry: now + global.rateLimitWindowMs });
+        return true;
+    }
+
+    let entry = global.requestCounts.get(ip);
+
+    if (now > entry.expiry) {
+        // Expired window, reset data
+        global.requestCounts.set(ip, { count: 1, expiry: now + global.rateLimitWindowMs });
+        return true;
+    }
+
+    if (entry.count < global.maxRequestsPerWindow) {
+        // Increment the counter for this IP address
+        entry.count += 1;
+        return true;
+    }
+
+    // Limit reached
+    return false;
+}
+
+export { log, getHashFromBuffer, getClientIP, checkToken, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries, rateLimit };
