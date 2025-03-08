@@ -178,30 +178,29 @@ const checkExpiredFiles = async () => {
 const checkInvalidFiles = async () => {
     const files = await DatabaseWrapper.getAllFileIDs();
 
-    if (files.length === 0) return;
-
-    let deletedCount = 0;
-
-    const deletionPromises = files.map(async (row) => {
-        const uuid = row.ID;
-        const filePath = join(global.storagePath, uuid);
-
-        if (!await Bun.file(filePath).exists()) {
-            return DatabaseWrapper.deleteFileFromUUID(uuid)
-            .then(() => {
-                deletedCount++;
-            })
-            .catch((error) => {
-                log.error(error.stack);
-            });
-        }
-    });
-
-    // Wait for all deletions to complete
-    await Promise.all(deletionPromises);
+    if (files.length > 0) {
+        let invalidFileCount = 0;
+        let deletedCount = 0;
     
-    if (deletionPromises.length > 0) {
-        log.info(`Deleted invalid file(s) (${deletedCount}/${files.length} file(s) deleted from the database)`);
+        const deletionPromises = files.map(async (row) => {
+            const uuid = row.ID;
+            const filePath = join(global.storagePath, uuid);
+    
+            if (!await Bun.file(filePath).exists()) {
+                invalidFileCount++;
+                return DatabaseWrapper.deleteFileFromUUID(uuid)
+                .then(() => {
+                    deletedCount++;
+                })
+                .catch((error) => {
+                    log.error(error.stack);
+                });
+            }
+        });
+    
+        // Wait for all deletions to complete
+        await Promise.all(deletionPromises);
+        log.info(`Deleted ${deletedCount}/${invalidFileCount} invalid file(s) from the database)`);
     }
 };
 
