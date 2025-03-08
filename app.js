@@ -33,6 +33,8 @@ const server = Bun.serve({
     development: process.argv.includes("--dev") || false,
 
     routes: {
+        "/": Response.redirect("/info/", 307),
+
         // Ping the server
         "/ping": async () => {
             return Response.json({ success: true, timestamp: Date.now() },
@@ -157,6 +159,8 @@ const server = Bun.serve({
                 return Response.json({ success: true, uuid }, { status: 200 });
             }
         },
+
+        "/info": Response.redirect("/info/", 301),
 
         // Get info about the server
         "/info/": async () => {
