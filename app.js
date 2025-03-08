@@ -30,6 +30,7 @@ global.maxRequestsPerWindow = process.env.RATE_LIMIT; // Maximum amount of reque
 const server = Bun.serve({
     port: global.serverPort,
     maxRequestBodySize: global.maximumUploadSize,
+    development: process.argv.includes("--dev") || false,
 
     routes: {
         // Ping the server
@@ -282,27 +283,31 @@ const server = Bun.serve({
         log.error(`${error.stack}`);
         return Response.json({ success: false, cause: "Internal Server Error" }, { status: 500 });
     }
-});
+})
 
 global.startupTime = Date.now();
-log.info(`Server is now running on ${server.port}`);
+log.info(`Server is now running on ${server.url}`);
 
-setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
-checkExpiredFiles();
-setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
-checkInvalidFiles();
-setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
+(async() => {
+    setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 
-checkHashes(); // Check for files that haven't gotten an hash on startup
+    await checkInvalidFiles();
+    setInterval(checkInvalidFiles, 86_400_000); // Check for invalid files every day
+
+    await checkExpiredFiles();
+    setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
+    
+    await checkHashes(); // Check for files that haven't gotten an hash on startup
+})();
 
 process.on("unhandledRejection", async (reason, promise) => {
     await log.fatal(reason);
-    //await server.stop();
-    //process.exit(1);
+    await server.stop();
+    process.exit(1);
 });
 
 process.on("uncaughtException", async (error) => {
     await log.fatal(error);
-    //await server.stop();
-    //process.exit(1);
+    await server.stop();
+    process.exit(1);
 });

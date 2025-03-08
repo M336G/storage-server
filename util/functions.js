@@ -137,7 +137,7 @@ async function checkToken(token) {
         }
         return true;
     } catch (error) {
-        log.error("Error while verifying token:", error);
+        log.error("Error while verifying token:", error.stack);
         return false;
     }
 }
@@ -150,69 +150,81 @@ const checkExpiredFiles = async () => {
 
     // Fetch files that need to be deleted
     const files = await DatabaseWrapper.getExpiredFiles(now, unaccessedBeforeDeletion);
-
+        
     if (files.length > 0) {
         // Delete expired files from the database
-        await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion);
+        await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion).catch((error) => { log.error(error.stack) });
+
+        let deletedCount = 0;
 
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
             const uuid = row.ID;
-            return unlink(join(global.storagePath, uuid)).catch(() => ({})) || {};;
+                
+            return unlink(join(global.storagePath, uuid))
+                .then(() => {
+                    deletedCount++;
+                })
+                .catch(() => {
+                    log.error(`Failed to delete file "${uuid}" from storage`);
+                });
         });
 
-        // Wait for all deletions to complete
-        try {
-            await Promise.all(fsDeletionPromises);
-            log.info(`Deleted expired/(old) unaccessed file(s) (${files.length} file(s))`);
-        } catch (error) {
-            log.error("Error deleting files from storage:", error);
-        }
+        await Promise.all(fsDeletionPromises);
+        log.info(`Deleted expired/unaccessed file(s) (${deletedCount}/${files.length} file(s) deleted from the storage)`);
     }
 };
 
 const checkInvalidFiles = async () => {
     const files = await DatabaseWrapper.getAllFileIDs();
 
-    if (files.length == 0) return;
+    if (files.length === 0) return;
 
-    const deletionPromises = [];
+    let deletedCount = 0;
 
-    for (const row of files) {
+    const deletionPromises = files.map(async (row) => {
         const uuid = row.ID;
         const filePath = join(global.storagePath, uuid);
 
         if (!await Bun.file(filePath).exists()) {
-            deletionPromises.push(
-                await DatabaseWrapper.deleteFileFromUUID(uuid)
-            );
+            return DatabaseWrapper.deleteFileFromUUID(uuid)
+            .then(() => {
+                deletedCount++;
+            })
+            .catch((error) => {
+                log.error(error.stack);
+            });
         }
-    }
+    });
 
     // Wait for all deletions to complete
-    try {
-        await Promise.all(deletionPromises);
-        if (deletionPromises.length > 0) log.info(`Deleted invalid file(s) (${deletionPromises.length} file(s))`);
-    } catch (error) {
-        log.error("Error deleting invalid files from the database:", error);
+    await Promise.all(deletionPromises);
+    
+    if (deletionPromises.length > 0) {
+        log.info(`Deleted invalid file(s) (${deletedCount}/${files.length} file(s) deleted from the database)`);
     }
 };
 
+
 const checkHashes = async () => {
-    try {
-        const files = await DatabaseWrapper.getFileIDsWithoutHash();
+    const files = await DatabaseWrapper.getFileIDsWithoutHash();
 
-        if (files.length > 0) {
-            for (const file of files) {
-                const filePath = join(global.storagePath, file.ID);
-                const hash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
+    if (files.length > 0) {
+        let storedCount = 0;
 
-                await DatabaseWrapper.updateHashFromUUID(hash, file.ID);
-            }
-            log.info(`Stored the hash of ${files.length} file(s)`);
+        for (const file of files) {
+            const filePath = join(global.storagePath, file.ID);
+            const hash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
+
+            await DatabaseWrapper.updateHashFromUUID(hash, file.ID)
+            .then(() => {
+                storedCount++;
+            })
+            .catch((error) => {
+                log.error(error.stack);
+            });
         }
-    } catch (error) {
-        log.error("Error storing file hashes in storage:", error);
+        log.info(`Stored the hash of ${storedCount}/${files.length} file(s)`);
     }
 };
 
