@@ -171,7 +171,7 @@ const checkExpiredFiles = async () => {
         });
 
         await Promise.all(fsDeletionPromises);
-        log.info(`Deleted expired/unaccessed file(s) (${deletedCount}/${files.length} file(s) deleted from the storage)`);
+        log.info(`Deleted ${deletedCount}/${files.length} expired/unaccessed file(s)from the storage`);
     }
 };
 
@@ -200,7 +200,9 @@ const checkInvalidFiles = async () => {
     
         // Wait for all deletions to complete
         await Promise.all(deletionPromises);
-        log.info(`Deleted ${deletedCount}/${invalidFileCount} invalid file(s) from the database)`);
+        if (invalidFileCount > 0) {
+            log.info(`Deleted ${deletedCount}/${invalidFileCount} invalid file(s) from the database`);
+        }
     }
 };
 

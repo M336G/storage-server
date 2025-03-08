@@ -1,7 +1,7 @@
 {
   "name": "storage-server",
   "description": "An easy to setup and optimized storing solution using Bun.",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "main": "app.js",
   "author": "M336",
   "license": "AGPL-3.0-only",
