@@ -36,42 +36,75 @@ const server = Bun.serve({
         "/": Response.redirect("/info/", 307),
 
         // Ping the server
-        "/ping": async () => {
-            return Response.json({ success: true, timestamp: Date.now() },
-                {
-                    headers: {
-                        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-                        "Pragma": "no-cache",
-                        "Expires": "0",
-                        "Surrogate-Control": "no-store",
+        "/ping": {
+            OPTIONS: async () => {
+                return new Response(null,
+                    {
+                        status: 204,
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, OPTIONS",
+
+                            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                            "Pragma": "no-cache",
+                            "Expires": "0",
+                            "Surrogate-Control": "no-store",
+                        }
                     }
-                }
-            )
+                );
+            },
+            GET: async () => {
+                return Response.json({ success: true, timestamp: Date.now() },
+                    {
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, OPTIONS",
+
+                            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                            "Pragma": "no-cache",
+                            "Expires": "0",
+                            "Surrogate-Control": "no-store",
+                        }
+                    }
+                );
+            }
         },
 
         "/file/:uuid": {
+            OPTIONS: async () => {
+                return new Response(null,
+                    {
+                        status: 204,
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, HEAD, DELETE, OPTIONS",
+                            "Access-Control-Allow-Headers": "Authorization"
+                        }
+                    }
+                );
+            },
             // Get info about the file
             HEAD: async (req) => {
                 const uuid = req.params.uuid;
-        
+
                 // Check if UUID is valid
                 if (!uuid || !isUUID(uuid, 4) || uuid.includes("..") || uuid.includes("/")) return new Response(null, { status: 400 });
-        
+
                 // Check if file exists in the database
                 if (!await DatabaseWrapper.checkFileExistenceFromUUID(uuid)) {
                     return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
                 }
-        
+
                 const filePath = join(global.storagePath, uuid);
-        
+
                 // Check if the file exists locally
                 if (!await Bun.file(filePath).exists()) {
                     await DatabaseWrapper.deleteFileFromUUID(uuid); // Clean up the database if file is missing
                     return new Response(null, { status: 404 });
                 }
-        
+
                 const fileMetadata = await DatabaseWrapper.getFileMetadataFromUUID(uuid);
-        
+
                 const now = Date.now();
                 const expires = fileMetadata.expires ? parseInt(fileMetadata.expires, 10) : null;
                 const maxAge = expires ? (expires > now ? expires - now : -1) : 2592000000; // Default to 30 days
@@ -83,27 +116,30 @@ const server = Bun.serve({
                     log.info(`Deleted expired file (${uuid})`);
                     return new Response(null, { status: 404 });
                 }
-        
+
                 const headers = {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, DELETE, OPTIONS",
+
                     "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`,
                     "Content-Length": (await Bun.file(filePath).bytes()).length,
                 };
-        
+
                 if (fileMetadata.compressed >= 1) headers["Content-Encoding"] = contentEncoding[fileMetadata.compressed];
-        
+
                 return new Response(null, { status: 200, headers });
             },
 
             // Get a file from the server
             GET: async (req) => {
                 if (!await rateLimit(req)) return Response.json({ success: false, cause: `Rate limited` }, { status: 429 });
-                
+
                 const uuid = req.params.uuid;
                 if (!uuid) return Response.json({ success: false, cause: "You can't just use that on the whole server!" }, { status: 400 });
                 if (!isUUID(uuid, 4) || uuid.includes("..") || uuid.includes("/")) return Response.json({ success: false, cause: "Invalid UUID" }, { status: 400 });
 
                 if (!await DatabaseWrapper.checkFileExistenceFromUUID(uuid)) return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
-                
+
                 // If it doesn't exist locally delete it from the database
                 if (!await Bun.file(join(global.storagePath, uuid)).exists()) {
                     await DatabaseWrapper.deleteFileFromUUID(uuid);
@@ -125,17 +161,22 @@ const server = Bun.serve({
                 }
 
                 DatabaseWrapper.updateLastAccessFromUUID(uuid); // Update the last access time
-        
+
                 const fileStream = Bun.file(join(global.storagePath, uuid)).stream();
                 const passThrough = new PassThrough();
-        
+
                 pipeline(fileStream, passThrough, (error) => {
                     if (error) {
                         throw new Error(error);
                     }
                 });
-        
-                const responseHeaders = { "Cache-Control": `public max-age=${maxAge / 1000}, immutable` };
+
+                const responseHeaders = {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, DELETE, OPTIONS",
+
+                    "Cache-Control": `public max-age=${maxAge / 1000}, immutable`
+                };
                 if (fileMetadata.compressed >= 1) responseHeaders["Content-Encoding"] = contentEncoding[fileMetadata.compressed];
 
                 return new Response(passThrough, { headers: responseHeaders });
@@ -156,63 +197,117 @@ const server = Bun.serve({
                 await unlink(join(global.storagePath, uuid));
 
                 log.info(`Deleted file (${uuid})`);
-                return Response.json({ success: true, uuid }, { status: 200 });
+                return Response.json({ success: true, uuid }, {
+                    status: 200, headers:
+                    {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, HEAD, DELETE, OPTIONS",
+                        "Access-Control-Allow-Headers": "Authorization",
+                    }
+                });
             }
         },
 
         "/info": Response.redirect("/info/", 301),
 
         // Get info about the server
-        "/info/": async () => {
-            return Response.json({
-                success: true,
-                name: global.serverHostname,
-                version: global.serverVersion,
-                start: global.startupTime,
-                count: await DatabaseWrapper.getTotalAmountOfFiles(),
-                size: await DatabaseWrapper.getTotalSize(),
-                maxUploadSize: global.maximumUploadSize,
-                maxSize: global.maxStorageBytes,
-                maxUnaccessedTime: global.unaccessedMillisecondsBeforeDeletion
-            });
+        "/info/": {
+            OPTIONS: async () => {
+                return new Response(null,
+                    {
+                        status: 204,
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, OPTIONS"
+                        }
+                    }
+                );
+            },
+            GET: async () => {
+                return Response.json({
+                    success: true,
+                    name: global.serverHostname,
+                    version: global.serverVersion,
+                    start: global.startupTime,
+                    count: await DatabaseWrapper.getTotalAmountOfFiles(),
+                    size: await DatabaseWrapper.getTotalSize(),
+                    maxUploadSize: global.maximumUploadSize,
+                    maxSize: global.maxStorageBytes,
+                    maxUnaccessedTime: global.unaccessedMillisecondsBeforeDeletion
+                }, {
+                    headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS"
+                    }
+                });
+            }
         },
 
         // Get info about a specific file
-        "/info/:uuid": async (req) => {
-            const uuid = req.params.uuid;
-            if (!isUUID(uuid, 4) || uuid.includes("..") || uuid.includes("/")) return Response.json({ success: false, cause: "Invalid UUID" }, { status: 400 });
-    
-            if (!await DatabaseWrapper.checkFileExistenceFromUUID(uuid)) return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
-            
-            const fileMetadata = await DatabaseWrapper.getFileMetadataFromUUID(uuid);
+        "/info/:uuid": {
+            OPTIONS: async () => {
+                return new Response(null,
+                    {
+                        status: 204,
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, OPTIONS"
+                        }
+                    }
+                );
+            },
+            GET: async (req) => {
+                const uuid = req.params.uuid;
+                if (!isUUID(uuid, 4) || uuid.includes("..") || uuid.includes("/")) return Response.json({ success: false, cause: "Invalid UUID" }, { status: 400 });
 
-            const now = Date.now();
-            const expires = fileMetadata.expires ? parseInt(fileMetadata.expires, 10) : null;
-            const maxAge = expires ? (expires > now ? expires - now : -1) : 30 * 24 * 60 * 60 * 1000; // Default to 30 days
+                if (!await DatabaseWrapper.checkFileExistenceFromUUID(uuid)) return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
 
-            // If the file is expired, delete it completely instead of returning info about it
-            if (expires && maxAge <= 0) {
-                await DatabaseWrapper.deleteFileFromUUID(uuid); // Delete the entry from the database
-                await unlink(join(global.storagePath, uuid)); // Delete the file itself
-                log.info(`Deleted expired file (${uuid})`);
-                return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
+                const fileMetadata = await DatabaseWrapper.getFileMetadataFromUUID(uuid);
+
+                const now = Date.now();
+                const expires = fileMetadata.expires ? parseInt(fileMetadata.expires, 10) : null;
+                const maxAge = expires ? (expires > now ? expires - now : -1) : 30 * 24 * 60 * 60 * 1000; // Default to 30 days
+
+                // If the file is expired, delete it completely instead of returning info about it
+                if (expires && maxAge <= 0) {
+                    await DatabaseWrapper.deleteFileFromUUID(uuid); // Delete the entry from the database
+                    await unlink(join(global.storagePath, uuid)); // Delete the file itself
+                    log.info(`Deleted expired file (${uuid})`);
+                    return Response.json({ success: false, cause: "This file doesn't exist!" }, { status: 404 });
+                }
+
+                return Response.json({
+                    success: true,
+                    uuid,
+                    hash: fileMetadata.hash,
+                    compressedHash: fileMetadata.compressedHash,
+                    compressionType: contentEncoding[fileMetadata.compressed],
+                    size: fileMetadata.size,
+                    expires: fileMetadata.expires,
+                    accessed: fileMetadata.accessed,
+                    timestamp: fileMetadata.timestamp,
+                }, {
+                    headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS"
+                    }
+                });
             }
-
-            return Response.json({
-                success: true,
-                uuid,
-                hash: fileMetadata.hash,
-                compressedHash: fileMetadata.compressedHash,
-                compressionType: contentEncoding[fileMetadata.compressed],
-                size: fileMetadata.size,
-                expires: fileMetadata.expires,
-                accessed: fileMetadata.accessed,
-                timestamp: fileMetadata.timestamp,
-            });
         },
 
         // Upload a new file on the server
         "/upload": {
+            OPTIONS: async () => {
+                return new Response(null,
+                    {
+                        status: 204,
+                        headers: {
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS"
+                        }
+                    }
+                );
+            },
             POST: async (req) => {
                 if (!await rateLimit(req)) return Response.json({ success: false, cause: "Rate limited" }, { status: 429 });
                 if (!await checkToken(req.headers.get("Authorization"))) return Response.json({ success: false, cause: "Unauthorized" }, { status: 401 });
@@ -223,19 +318,19 @@ const server = Bun.serve({
                 if (!file && !link) return Response.json({ success: false, cause: "Please at least send a file or a link!" }, { status: 400 });
 
                 if (file && !isBase64(file)) return Response.json({ success: false, cause: "Please send a base64 encoded file" }, { status: 422 });
-                
+
                 if (link) link = decodeURIComponent(link).replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, "");
                 if (link && !isURL(link)) return Response.json({ success: false, cause: "Please send a valid URL" }, { status: 422 });
 
                 if (expires && typeof expires !== "number") return Response.json({ success: false, cause: "Make sure that the expires parameter is an integer" }, { status: 422 });
                 if (expires && expires <= Date.now()) return Response.json({ success: false, cause: "Expiry timestamp must be above the current epoch timestamp (in milliseconds)" }, { status: 422 });
-        
+
                 if (file) file = Buffer.from(file, "base64");
                 if (link) {
                     const response = await fetch(link, { headers: { "User-Agent": `StorageServer/${global.serverVersion}` } });
-                    
+
                     if (!response.ok) throw new Error(`Failed to fetch file from URL with code ${response.status}:`, response.statusText);
-                    
+
                     file = Buffer.from(await response.arrayBuffer());
                 }
 
@@ -275,14 +370,20 @@ const server = Bun.serve({
                 await DatabaseWrapper.addFile(uuid, hash, compressedHash, file.length, expires, compressed);
 
                 log.info(`New file added (${uuid})`);
-                return Response.json({ success: true, uuid, hash, compressedHash }, { status: 201 });
+                return Response.json({ success: true, uuid, hash, compressedHash }, {
+                    status: 201,
+                    headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "POST, OPTIONS"
+                    }
+                });
             }
         },
 
         // If the endpoint is not found
         "/*": Response.json({ success: false, cause: "Not Found" }, { status: 404 })
     },
-    
+
     error(error) {
         log.error(`${error.stack}`);
         return Response.json({ success: false, cause: "Internal Server Error" }, { status: 500 });
@@ -292,7 +393,7 @@ const server = Bun.serve({
 global.startupTime = Date.now();
 log.info(`Server is now running on ${server.url}`);
 
-(async() => {
+(async () => {
     setInterval(cleanExpiredIPEntries, 60_000); // Check for expired IP entries every minute
 
     await checkInvalidFiles();
@@ -300,7 +401,7 @@ log.info(`Server is now running on ${server.url}`);
 
     await checkExpiredFiles();
     setInterval(checkExpiredFiles, 1_800_000); // Check for expired/(old) unaccessed files every 30 minutes
-    
+
     await checkHashes(); // Check for files that haven't gotten an hash on startup
 })();
 
