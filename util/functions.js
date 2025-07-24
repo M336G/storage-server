@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { appendFile, unlink } from "node:fs/promises";
+import { appendFile, unlink, readdir } from "node:fs/promises";
 import { DatabaseWrapper } from "./database.js";
 
 const logFilePath = process.env.WRITE_LOGS ? process.env.WRITE_LOGS : false;
@@ -150,7 +150,7 @@ const checkExpiredFiles = async () => {
 
     // Fetch files that need to be deleted
     const files = await DatabaseWrapper.getExpiredFiles(now, unaccessedBeforeDeletion);
-        
+
     if (files.length > 0) {
         // Delete expired files from the database
         await DatabaseWrapper.deleteExpiredFiles(now, unaccessedBeforeDeletion).catch((error) => { log.error(error.stack) });
@@ -160,7 +160,7 @@ const checkExpiredFiles = async () => {
         // Prepare deletion promises for the files
         const fsDeletionPromises = files.map(row => {
             const uuid = row.ID;
-                
+
             return unlink(join(global.storagePath, uuid))
                 .then(() => {
                     deletedCount++;
@@ -181,23 +181,23 @@ const checkInvalidFiles = async () => {
     if (files.length > 0) {
         let invalidFileCount = 0;
         let deletedCount = 0;
-    
+
         const deletionPromises = files.map(async (row) => {
             const uuid = row.ID;
             const filePath = join(global.storagePath, uuid);
-    
+
             if (!await Bun.file(filePath).exists()) {
                 invalidFileCount++;
                 return DatabaseWrapper.deleteFileFromUUID(uuid)
-                .then(() => {
-                    deletedCount++;
-                })
-                .catch((error) => {
-                    log.error(error.stack);
-                });
+                    .then(() => {
+                        deletedCount++;
+                    })
+                    .catch((error) => {
+                        log.error(error.stack);
+                    });
             }
         });
-    
+
         // Wait for all deletions to complete
         await Promise.all(deletionPromises);
         if (invalidFileCount > 0) {
@@ -218,16 +218,40 @@ const checkHashes = async () => {
             const hash = await getHashFromBuffer(await Bun.file(filePath).arrayBuffer());
 
             await DatabaseWrapper.updateHashFromUUID(hash, file.ID)
-            .then(() => {
-                storedCount++;
-            })
-            .catch((error) => {
-                log.error(error.stack);
-            });
+                .then(() => {
+                    storedCount++;
+                })
+                .catch((error) => {
+                    log.error(error.stack);
+                });
         }
         log.info(`Stored the hash of ${storedCount}/${files.length} file(s)`);
     }
 };
+
+// Check every UUID in the storage path and delete files that do not exist in the database
+const checkUnknownFiles = async () => {
+    const files = await readdir(global.storagePath);
+    if (files.length > 0) {
+        let deletedFiles = 0;
+        let failedFiles = 0;
+
+        for (const file of files) {
+            if (file == "placeholder" || file == ".DS_Store" || file == "Thumbs.db") continue;
+
+            try {
+                if (!await DatabaseWrapper.checkFileExistenceFromUUID(file)) {
+                    await unlink(join(global.storagePath, file));
+                    deletedFiles++;
+                }
+            } catch (error) {
+                log.error(`Error deleting unknown file (${file}): ${error}`);
+                failedFiles++;
+            }
+        }
+        if (deletedFiles > 0 || failedFiles > 0) log.info(`Deleted ${deletedFiles}/${files.length} unknown file(s) from the storage (${failedFiles} failed)`);
+    }
+}
 
 // Clean up expired IP entries
 async function cleanExpiredIPEntries() {
@@ -269,4 +293,4 @@ async function rateLimit(request) {
     return false;
 }
 
-export { log, getHashFromBuffer, getClientIP, checkToken, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries, rateLimit };
+export { log, getHashFromBuffer, getClientIP, checkToken, checkExpiredFiles, checkInvalidFiles, checkHashes, checkUnknownFiles, cleanExpiredIPEntries, rateLimit };
