@@ -6,6 +6,7 @@ import { PassThrough, pipeline } from "node:stream";
 import { deflate, gzip } from "node:zlib";
 import { isURL, isUUID } from "validator";
 import { promisify } from "node:util";
+import { fileTypeFromBuffer } from "file-type";
 
 import { log, getHashFromBuffer, checkExpiredFiles, checkInvalidFiles, checkHashes, cleanExpiredIPEntries, checkToken, rateLimit, checkUnknownFiles } from "./util/functions.js";
 import { contentEncoding, Headers } from "./util/utilities.js";
@@ -87,14 +88,19 @@ const server = Bun.serve({
                     return new Response(null, { status: 404, headers: Headers.file });
                 }
 
+                const file = await Bun.file(filePath).bytes();
+
                 const headers = {
                     ...Headers.file,
-
-                    "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`,
-                    "Content-Length": (await Bun.file(filePath).bytes()).length
+                    
+                    "Content-Length": file.byteLength,
+                    "Cache-Control": `public, max-age=${maxAge / 1000}, immutable`
                 };
 
                 if (fileMetadata.compressed >= 1) headers["Content-Encoding"] = contentEncoding[fileMetadata.compressed];
+
+                const fileType = fileMetadata.compressed < 1 ? (await fileTypeFromBuffer(file))?.mime : null;
+                if (fileType) headers["Content-Type"] = fileType;
 
                 return new Response(null, { status: 200, headers });
             },
@@ -148,6 +154,9 @@ const server = Bun.serve({
                     "Cache-Control": `public max-age=${maxAge / 1000}, immutable`
                 };
                 if (fileMetadata.compressed >= 1) responseHeaders["Content-Encoding"] = contentEncoding[fileMetadata.compressed];
+
+                const fileType = fileMetadata.compressed < 1 ? (await fileTypeFromBuffer(await Bun.file(join(global.storagePath, uuid)).bytes()))?.mime : null;
+                if (fileType) responseHeaders["Content-Type"] = fileType;
 
                 return new Response(passThrough, { headers: responseHeaders });
             },

@@ -1,7 +1,7 @@
 {
   "name": "storage-server",
   "description": "An easy to setup and optimized storing solution using Bun.",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "main": "app.js",
   "author": "M336",
   "license": "AGPL-3.0-only",
@@ -11,6 +11,7 @@
     "watch": "bun --watch app.js --max-executable-size=192 --max-old-space-size=256 --max-semi-space-size=2"
   },
   "dependencies": {
+    "file-type": "^21.0.0",
     "validator": "^13.15.15"
   }
 }
