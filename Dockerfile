@@ -26,8 +26,8 @@ RUN rm -f package-lock.json bun.lockb && \
     bun install --omit=dev --production
 
 # Set a non-root user for security (create one if needed)
-RUN addgroup --system storagegroup && \
-    adduser --system --ingroup storagegroup storageuser && \
+RUN groupadd --system storagegroup && \
+    useradd --system --gid storagegroup storageuser && \
     chown -R storageuser:storagegroup /app
 USER storageuser
 # NOTE: Make sure to allow the user "storageuser" to read and write on your mounted drives, if you have any!
