@@ -5,64 +5,70 @@ import { join } from "node:path";
 const migrationsPath = join(__dirname, "..", "data", "migrations");
 
 function initializeDatabase() {
-    try {
-        const db = new Database(join(__dirname, "..", "data", "database.db"));
+	try {
+		const db = new Database(join(__dirname, "..", "data", "database.db"));
 
-        db.exec(`CREATE TABLE IF NOT EXISTS migrations (
+		db.exec(`CREATE TABLE IF NOT EXISTS migrations (
                     "date" VARCHAR(8) NOT NULL UNIQUE,
                     "timestamp" INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY("date")
-                )`
-        );
+                )`);
 
-        const files = readdirSync(migrationsPath);
-        const sqlFiles = files.filter(file => file.endsWith(".sql"));
+		const files = readdirSync(migrationsPath);
+		const sqlFiles = files.filter((file) => file.endsWith(".sql"));
 
-        sqlFiles.sort((a, b) => {
-            const dateA = a.substring(0, 10);
-            const dateB = b.substring(0, 10);
+		sqlFiles.sort((a, b) => {
+			const dateA = a.substring(0, 10);
+			const dateB = b.substring(0, 10);
 
-            // Convert to Date objects
-            const [dayA, monthA, yearA] = dateA.split("-").map(Number);
-            const [dayB, monthB, yearB] = dateB.split("-").map(Number);
+			// Convert to Date objects
+			const [dayA, monthA, yearA] = dateA.split("-").map(Number);
+			const [dayB, monthB, yearB] = dateB.split("-").map(Number);
 
-            const dateObjA = new Date(yearA, monthA - 1, dayA);
-            const dateObjB = new Date(yearB, monthB - 1, dayB);
+			const dateObjA = new Date(yearA, monthA - 1, dayA);
+			const dateObjB = new Date(yearB, monthB - 1, dayB);
 
-            return dateObjA - dateObjB;
-        });
+			return dateObjA - dateObjB;
+		});
 
-        let completedMigrations = 0;
+		let completedMigrations = 0;
 
-        // Execute migrations order from oldest to most recent
-        for (const file of sqlFiles) {
-            const migrationDate = file.substring(0, 10);
+		// Execute migrations order from oldest to most recent
+		for (const file of sqlFiles) {
+			const migrationDate = file.substring(0, 10);
 
-            const migrationExists = db.prepare("SELECT 1 FROM migrations WHERE date = ?").get(migrationDate);
-            if (!migrationExists) {
-                const filePath = join(migrationsPath, file);
-                const script = readFileSync(filePath, "utf-8");
-    
-                try {
-                    db.exec(script);
-                    db.prepare("INSERT INTO migrations (date, timestamp) VALUES (?, ?)").run(migrationDate, Date.now());
-                    completedMigrations += 1;
-                } catch (error) {
-                    console.warn(`[WARN] Skipped migration ${file}: ${error.message}`);
-                }
-            }
-        }
+			const migrationExists = db
+				.prepare("SELECT 1 FROM migrations WHERE date = ?")
+				.get(migrationDate);
+			if (!migrationExists) {
+				const filePath = join(migrationsPath, file);
+				const script = readFileSync(filePath, "utf-8");
 
-        if (completedMigrations > 0) console.info(`[INFO] Successfully ran ${completedMigrations} SQLite migrations`);
+				try {
+					db.exec(script);
+					db.prepare(
+						"INSERT INTO migrations (date, timestamp) VALUES (?, ?)",
+					).run(migrationDate, Date.now());
+					completedMigrations += 1;
+				} catch (error) {
+					console.warn(`[WARN] Skipped migration ${file}: ${error.message}`);
+				}
+			}
+		}
 
-        db.exec("PRAGMA journal_mode = WAL;");
-        console.info("[INFO] Connected to SQLite");
+		if (completedMigrations > 0)
+			console.info(
+				`[INFO] Successfully ran ${completedMigrations} SQLite migrations`,
+			);
 
-        return db;
-    } catch (error) {
-        console.error("[ERROR] Error initializing SQLite database:", error);
-        process.exit(1);
-    }
+		db.exec("PRAGMA journal_mode = WAL;");
+		console.info("[INFO] Connected to SQLite");
+
+		return db;
+	} catch (error) {
+		console.error("[ERROR] Error initializing SQLite database:", error);
+		process.exit(1);
+	}
 }
 
 const db = initializeDatabase();

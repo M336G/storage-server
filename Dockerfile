@@ -1,4 +1,4 @@
-FROM oven/bun:latest
+FROM oven/bun:alpine
 
 # Metadata
 LABEL name="storage-server" \
@@ -9,16 +9,14 @@ LABEL name="storage-server" \
 ENV NODE_ENV=production
 
 # Install necessary system dependencies and clean up cache
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache git ca-certificates
 
 # Set the working directory
 WORKDIR /app
 
 # Clone from the GitHub repository
 ARG BRANCH=main
-RUN git clone --branch ${BRANCH} https://github.com/M336G/storage-server.git . && \
+RUN git clone --branch ${BRANCH} https://github.com/M336G/storage-server . && \
     git checkout ${BRANCH}
 
 # Install dependencies while skipping development dependencies
@@ -26,8 +24,8 @@ RUN rm -f package-lock.json bun.lockb && \
     bun install --omit=dev --production
 
 # Set a non-root user for security (create one if needed)
-RUN groupadd --system storagegroup && \
-    useradd --system --gid storagegroup storageuser && \
+RUN addgroup -S storagegroup && \
+    adduser -S -G storagegroup storageuser && \
     chown -R storageuser:storagegroup /app
 USER storageuser
 # NOTE: Make sure to allow the user "storageuser" to read and write on your mounted drives, if you have any!
